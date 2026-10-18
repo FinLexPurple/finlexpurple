@@ -43,6 +43,12 @@ class Config(BaseSettings):
     llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA, validation_alias="LLM_PROVIDER")
     ollama_model: str | None = Field(default=None, validation_alias="OLLAMA_MODEL")
     ollama_host: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_HOST")
+    anthropic_model: str = Field(default="claude-sonnet-5-5", validation_alias="ANTHROPIC_MODEL")
+    openai_model: str = Field(default="gpt-6.1-sol", validation_alias="OPENAI_MODEL")
+    openrouter_model: str = Field(
+        default="openai/gpt-6-luna", validation_alias="OPENROUTER_MODEL"
+    )
+    gemini_model: str = Field(default="gemini-3.8-flash", validation_alias="GEMINI_MODEL")
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openrouter_api_key: str | None = Field(default=None, validation_alias="OPENROUTER_API_KEY")
@@ -114,6 +120,10 @@ class Config(BaseSettings):
             "LLM_PROVIDER",
             "OLLAMA_MODEL",
             "OLLAMA_HOST",
+            "ANTHROPIC_MODEL",
+            "OPENAI_MODEL",
+            "OPENROUTER_MODEL",
+            "GEMINI_MODEL",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",

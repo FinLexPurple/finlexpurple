@@ -12,6 +12,10 @@ _VARIABLES = (
     "LLM_PROVIDER",
     "OLLAMA_MODEL",
     "OLLAMA_HOST",
+    "ANTHROPIC_MODEL",
+    "OPENAI_MODEL",
+    "OPENROUTER_MODEL",
+    "GEMINI_MODEL",
     "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY",
     "OPENROUTER_API_KEY",
@@ -35,6 +39,26 @@ def test_loads_dotenv_from_explicit_current_directory(tmp_path) -> None:
     config = Config.load(env_file)
 
     assert config.ollama_model == "local-test"
+
+
+def test_provider_models_have_overridable_defaults(tmp_path) -> None:
+    defaults = Config.load(tmp_path / ".env")
+    assert defaults.anthropic_model == "claude-sonnet-5-5"
+    assert defaults.openai_model == "gpt-6.1-sol"
+    assert defaults.openrouter_model == "openai/gpt-6-luna"
+    assert defaults.gemini_model == "gemini-3.8-flash"
+
+    env_file = tmp_path / "models.env"
+    env_file.write_text(
+        "ANTHROPIC_MODEL=custom-claude\nOPENAI_MODEL=custom-gpt\n"
+        "OPENROUTER_MODEL=custom/route\nGEMINI_MODEL=custom-gemini\n",
+        encoding="utf-8",
+    )
+    overridden = Config.load(env_file)
+    assert overridden.anthropic_model == "custom-claude"
+    assert overridden.openai_model == "custom-gpt"
+    assert overridden.openrouter_model == "custom/route"
+    assert overridden.gemini_model == "custom-gemini"
 
 
 def test_config_constructor_reads_dotenv_from_current_directory(tmp_path, monkeypatch) -> None:
