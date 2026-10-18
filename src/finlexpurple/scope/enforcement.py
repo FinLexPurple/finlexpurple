@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -16,12 +17,21 @@ class OutOfScopeError(PermissionError):
     """An action was blocked because it falls outside confirmed scope."""
 
 
-def _path_contains(root: str, candidate: str) -> bool:
+def _url_path_contains(root: str, candidate: str) -> bool:
     normalized_root = root.rstrip("/") or "/"
     normalized_candidate = candidate.rstrip("/") or "/"
     return normalized_candidate == normalized_root or normalized_candidate.startswith(
         normalized_root.rstrip("/") + "/"
     )
+
+
+def _filesystem_path_contains(root: str, candidate: str) -> bool:
+    normalized_root = os.path.normcase(os.path.abspath(root))
+    normalized_candidate = os.path.normcase(os.path.abspath(candidate))
+    try:
+        return os.path.commonpath((normalized_root, normalized_candidate)) == normalized_root
+    except ValueError:
+        return False
 
 
 def _deny(scope: ScopeDefinition, detail: str) -> None:
@@ -51,9 +61,9 @@ def _enforce_directory(scope: ScopeDefinition, destination: str | Path) -> None:
     except (OSError, RuntimeError):
         _deny(scope, "invalid filesystem destination")
     canonical = str(candidate)
-    if any(_path_contains(denied, canonical) for denied in scope.deny_paths):
+    if any(_filesystem_path_contains(denied, canonical) for denied in scope.deny_paths):
         _deny(scope, "denied filesystem path")
-    if any(_path_contains(allowed, canonical) for allowed in scope.allow_paths):
+    if any(_filesystem_path_contains(allowed, canonical) for allowed in scope.allow_paths):
         return
     _deny(scope, "filesystem path outside allowed directory")
 
@@ -87,7 +97,7 @@ def _enforce_url(scope: ScopeDefinition, raw: str) -> None:
     host = destination.host or ""
     path = destination.path or "/"
     if host in scope.deny_hosts or any(
-        _path_contains(denied, path) for denied in scope.deny_paths
+        _url_path_contains(denied, path) for denied in scope.deny_paths
     ):
         _deny(scope, "denied URL host or path")
     try:
@@ -103,5 +113,5 @@ def _enforce_url(scope: ScopeDefinition, raw: str) -> None:
     target = scope.target
     if destination.scheme != target.scheme or destination.port != target.port:
         _deny(scope, "URL scheme or port differs from confirmed target")
-    if not any(_path_contains(allowed, path) for allowed in scope.allow_paths):
+    if not any(_url_path_contains(allowed, path) for allowed in scope.allow_paths):
         _deny(scope, "URL path outside allow-list")
