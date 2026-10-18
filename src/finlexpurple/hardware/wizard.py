@@ -68,7 +68,7 @@ def _provider_incompatibility(tier: ModelTier, provider: LLMProvider) -> str | N
         if tier is ModelTier.LOCAL_8B_HYBRID:
             return (
                 "The local-8b-hybrid tier currently requires Ollama; its cloud fallback "
-                "will be configured in Phase 3."
+                "can be configured separately as an optional provider."
             )
         return f"The {tier.value} tier requires Ollama; cloud providers are incompatible."
     return None
@@ -86,10 +86,17 @@ def _choose_provider(tier: ModelTier) -> LLMProvider:
         typer.echo(error)
 
 
-def _persist_selections(env_path: Path, tier: ModelTier, provider: LLMProvider) -> bool:
+def _persist_selections(
+    env_path: Path,
+    tier: ModelTier,
+    provider: LLMProvider,
+    fallback_provider: LLMProvider | None = None,
+) -> bool:
     """Persist the selections, asking before changing any nonempty .env values."""
 
     updates = {"MODEL_TIER": tier.value, "LLM_PROVIDER": provider.value}
+    if fallback_provider is not None:
+        updates["FALLBACK_LLM_PROVIDER"] = fallback_provider.value
     try:
         existing = dotenv_values(env_path) if env_path.exists() else {}
         for key, value in updates.items():
@@ -135,6 +142,17 @@ def run_setup(
     typer.echo(f"Recommended tier: {recommendation.value}. {recommendation_reason(facts, recommendation)}")
     tier = _choose_tier(facts, recommendation)
     provider = _choose_provider(tier)
+    fallback_provider = None
+    if tier is ModelTier.LOCAL_8B_HYBRID and typer.confirm(
+        "Configure an optional cloud fallback provider? (configuration only; automatic routing is not active)",
+        default=False,
+    ):
+        cloud_choices = _PROVIDER_CHOICES[1:]
+        fallback_provider = LLMProvider(
+            cloud_choices[
+                _prompt_index("Choose a cloud fallback provider", tuple(label for _, label in cloud_choices))
+            ][0]
+        )
 
     needed = APPROXIMATE_MODEL_SIZES_GB.get(tier.value)
     if needed is not None and facts.free_disk_gb < needed:
@@ -145,12 +163,19 @@ def run_setup(
         )
 
     target = env_path or (Path.cwd() / ".env")
-    if not _persist_selections(target, tier, provider):
+    if not _persist_selections(target, tier, provider, fallback_provider):
         return False
     typer.echo(f"Saved MODEL_TIER={tier.value} and LLM_PROVIDER={provider.value} to {target}.")
     if provider is not LLMProvider.OLLAMA:
         key_name = f"{provider.value.upper()}_API_KEY"
         typer.echo(f"Before using this provider, add {key_name} to {target}.")
     if tier is ModelTier.LOCAL_8B_HYBRID:
-        typer.echo("Cloud fallback configuration for this tier is deferred to Phase 3.")
+        if fallback_provider is None:
+            typer.echo("No cloud fallback provider was configured.")
+        else:
+            typer.echo(f"Saved FALLBACK_LLM_PROVIDER={fallback_provider.value} to {target}.")
+            typer.echo(
+                "Add its API key before use. This phase stores fallback configuration only; "
+                "requests continue to use Ollama."
+            )
     return True

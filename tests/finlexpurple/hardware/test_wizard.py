@@ -40,13 +40,13 @@ def test_every_tier_provider_pairing(
     ("inputs", "gpu_kind", "gpu_memory", "expected_message"),
     [
         (
-            "1\n2\n1\n",
+            "1\n2\n1\nn\n",
             "nvidia",
             24.0,
             "local-30b tier requires Ollama",
         ),
         (
-            "1\n2\n1\n",
+            "1\n2\n1\nn\n",
             "nvidia",
             12.0,
             "local-8b-hybrid tier currently requires Ollama",
@@ -75,7 +75,7 @@ def test_provider_rejection_reprompts_with_clear_message(
     assert expected_message in output
     assert "Saved MODEL_TIER=" in output
     if "local-8b-hybrid" in expected_message:
-        assert "Cloud fallback configuration for this tier is deferred to Phase 3" in output
+        assert "No cloud fallback provider was configured" in output
 
 
 def facts(
@@ -122,6 +122,25 @@ def test_cloud_tier_defaults_to_first_cloud_provider(monkeypatch, tmp_path) -> N
     assert result.exit_code == 0, output
     assert "1. Anthropic (cloud)" in output
     assert "LLM_PROVIDER=anthropic" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_hybrid_can_save_optional_cloud_fallback_without_changing_active_provider(
+    monkeypatch, tmp_path
+) -> None:
+    result = run_setup(
+        monkeypatch,
+        tmp_path,
+        "1\n1\ny\n2\n",
+        facts(ram=16, gpu_kind="nvidia", gpu_memory=12),
+    )
+    output = strip_ansi(result.output)
+    saved = (tmp_path / ".env").read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, output
+    assert "LLM_PROVIDER=ollama" in saved
+    assert "FALLBACK_LLM_PROVIDER=openai" in saved
+    assert "configuration only" in output
+    assert "requests continue to use Ollama" in output
 
 
 def test_triage_warns_before_confirmation_and_low_disk_is_warning_only(
