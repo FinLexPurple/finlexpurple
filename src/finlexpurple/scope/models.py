@@ -9,7 +9,7 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
@@ -27,7 +27,7 @@ def _canonical_url_path(raw_path: str) -> str:
     normalized = posixpath.normpath("/" + decoded.lstrip("/"))
     if decoded.endswith("/") and normalized != "/":
         normalized += "/"
-    return normalized
+    return quote(normalized, safe="/:@!$&'()*+,;=-._~")
 
 
 def _canonical_hostname(hostname: str) -> str:
@@ -69,19 +69,29 @@ class Target(BaseModel):
             raise InvalidTargetError("Target cannot be empty.")
         if "://" in raw:
             return cls._parse_url(raw)
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address | None
         try:
             address = ipaddress.ip_address(raw)
         except ValueError:
             address = None
         if address is not None:
-            network = ipaddress.ip_network(f"{address}/{address.max_prefixlen}")
-            return cls(kind="network", canonical=network.with_prefixlen, network=network.with_prefixlen)
+            host_network = ipaddress.ip_network(f"{address}/{address.max_prefixlen}")
+            return cls(
+                kind="network",
+                canonical=host_network.with_prefixlen,
+                network=host_network.with_prefixlen,
+            )
+        parsed_network: ipaddress.IPv4Network | ipaddress.IPv6Network | None
         try:
-            network = ipaddress.ip_network(raw, strict=False)
+            parsed_network = ipaddress.ip_network(raw, strict=False)
         except ValueError:
-            network = None
-        if network is not None:
-            return cls(kind="network", canonical=network.with_prefixlen, network=network.with_prefixlen)
+            parsed_network = None
+        if parsed_network is not None:
+            return cls(
+                kind="network",
+                canonical=parsed_network.with_prefixlen,
+                network=parsed_network.with_prefixlen,
+            )
         try:
             local_path = Path(raw).expanduser().resolve(strict=True)
         except (OSError, RuntimeError):
@@ -140,12 +150,24 @@ class ScopeDefinition(BaseModel):
     def for_target(cls, target: Target, *, first_confirmed_at: datetime | None = None) -> ScopeDefinition:
         """Create an exact-target allow-list; denials take precedence at enforcement."""
 
-        common = {"target": target, "first_confirmed_at": first_confirmed_at}
         if target.kind == "url":
-            return cls(**common, allow_hosts=(target.host or "",), allow_paths=(target.path or "/",))
+            return cls(
+                target=target,
+                first_confirmed_at=first_confirmed_at,
+                allow_hosts=(target.host or "",),
+                allow_paths=(target.path or "/",),
+            )
         if target.kind == "network":
-            return cls(**common, allow_networks=(target.network or "",))
-        return cls(**common, allow_paths=(str(target.local_path),))
+            return cls(
+                target=target,
+                first_confirmed_at=first_confirmed_at,
+                allow_networks=(target.network or "",),
+            )
+        return cls(
+            target=target,
+            first_confirmed_at=first_confirmed_at,
+            allow_paths=(str(target.local_path),),
+        )
 
     def confirmed(self, timestamp: datetime | None = None) -> ScopeDefinition:
         """Return a copy carrying a UTC confirmation timestamp."""

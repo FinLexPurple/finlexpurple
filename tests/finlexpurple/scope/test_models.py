@@ -14,6 +14,7 @@ from finlexpurple.scope.models import InvalidTargetError, ScopeDefinition, Targe
     [
         ("HTTPS://ExAmPlE.COM:443/a/../app/", "https://example.com/app/", "example.com", "/app/", None),
         ("http://example.com:8080/app", "http://example.com:8080/app", "example.com", "/app", 8080),
+        ("https://example.com/a%20folder", "https://example.com/a%20folder", "example.com", "/a%20folder", None),
         ("https://[2001:db8::1]/", "https://[2001:db8::1]/", "2001:db8::1", "/", None),
     ],
 )
