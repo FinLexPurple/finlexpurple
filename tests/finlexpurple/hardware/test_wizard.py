@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,11 @@ from finlexpurple.hardware.detect import HardwareFacts
 from finlexpurple.hardware.tiers import ModelTier
 
 runner = CliRunner()
+_ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def strip_ansi(output: str) -> str:
+    return _ANSI_ESCAPE.sub("", output)
 
 
 @pytest.mark.parametrize(
@@ -63,12 +69,13 @@ def test_provider_rejection_reprompts_with_clear_message(
 ) -> None:
     hardware = facts(ram=8 if gpu_kind == "none" else 32, gpu_kind=gpu_kind, gpu_memory=gpu_memory)
     result = run_setup(monkeypatch, tmp_path, inputs, hardware)
+    output = strip_ansi(result.output)
 
-    assert result.exit_code == 0, result.output
-    assert expected_message in result.output
-    assert "Saved MODEL_TIER=" in result.output
+    assert result.exit_code == 0, output
+    assert expected_message in output
+    assert "Saved MODEL_TIER=" in output
     if "local-8b-hybrid" in expected_message:
-        assert "Cloud fallback configuration for this tier is deferred to Phase 3" in result.output
+        assert "Cloud fallback configuration for this tier is deferred to Phase 3" in output
 
 
 def facts(
@@ -97,21 +104,23 @@ def run_setup(monkeypatch, tmp_path: Path, inputs: str, hardware: HardwareFacts)
 
 def test_no_gpu_low_ram_only_offers_cloud_and_persists_choices(monkeypatch, tmp_path) -> None:
     result = run_setup(monkeypatch, tmp_path, "1\n1\n", facts(ram=7.9))
+    output = strip_ansi(result.output)
 
-    assert result.exit_code == 0, result.output
-    assert "local-3b-triage" not in result.output
-    assert "Ollama model directory: /synthetic/models" in result.output
-    assert "checked at /synthetic" in result.output
+    assert result.exit_code == 0, output
+    assert "local-3b-triage" not in output
+    assert f"Ollama model directory: {Path('/synthetic/models')}" in output
+    assert f"checked at {Path('/synthetic')}" in output
     assert "MODEL_TIER=cloud" in (tmp_path / ".env").read_text(encoding="utf-8")
     assert "LLM_PROVIDER=anthropic" in (tmp_path / ".env").read_text(encoding="utf-8")
-    assert "Ollama (local)" not in result.output
+    assert "Ollama (local)" not in output
 
 
 def test_cloud_tier_defaults_to_first_cloud_provider(monkeypatch, tmp_path) -> None:
     result = run_setup(monkeypatch, tmp_path, "1\n\n", facts(ram=4))
+    output = strip_ansi(result.output)
 
-    assert result.exit_code == 0, result.output
-    assert "1. Anthropic (cloud)" in result.output
+    assert result.exit_code == 0, output
+    assert "1. Anthropic (cloud)" in output
     assert "LLM_PROVIDER=anthropic" in (tmp_path / ".env").read_text(encoding="utf-8")
 
 
@@ -119,13 +128,14 @@ def test_triage_warns_before_confirmation_and_low_disk_is_warning_only(
     monkeypatch, tmp_path
 ) -> None:
     result = run_setup(monkeypatch, tmp_path, "2\ny\n1\n", facts(free_disk=1.5))
+    output = strip_ansi(result.output)
 
-    assert result.exit_code == 0, result.output
-    assert result.output.index("Warning: local-3b-triage") < result.output.index(
+    assert result.exit_code == 0, output
+    assert output.index("Warning: local-3b-triage") < output.index(
         "Continue with the triage-only tier?"
     )
-    assert "needs approximately 2 GB" in result.output
-    assert "Saved MODEL_TIER=local-3b-triage" in result.output
+    assert "needs approximately 2 GB" in output
+    assert "Saved MODEL_TIER=local-3b-triage" in output
 
 
 def test_existing_env_values_require_approval_and_are_preserved_on_rejection(
@@ -136,10 +146,11 @@ def test_existing_env_values_require_approval_and_are_preserved_on_rejection(
     env_file.write_text(original, encoding="utf-8")
 
     result = run_setup(monkeypatch, tmp_path, "1\n2\nn\n", facts())
+    output = strip_ansi(result.output)
 
     assert result.exit_code == 1
-    assert ".env already sets MODEL_TIER=local-3b-triage" in result.output
-    assert "Existing MODEL_TIER preserved" in result.output
+    assert ".env already sets MODEL_TIER=local-3b-triage" in output
+    assert "Existing MODEL_TIER preserved" in output
     assert env_file.read_text(encoding="utf-8") == original
 
 
@@ -149,7 +160,7 @@ def test_existing_env_values_are_updated_only_after_approval(monkeypatch, tmp_pa
 
     result = run_setup(monkeypatch, tmp_path, "1\n4\ny\ny\n", facts())
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0, strip_ansi(result.output)
     saved = env_file.read_text(encoding="utf-8")
     assert "MODEL_TIER=cloud" in saved
     assert "LLM_PROVIDER=gemini" in saved
