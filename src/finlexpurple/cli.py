@@ -53,6 +53,9 @@ def init() -> None:
     """Create a local .env from the packaged template, without overwriting."""
 
     destination = Path.cwd() / ".env"
+    if destination.exists():
+        typer.echo(".env already exists; leaving it unchanged.")
+        raise typer.Exit()
     try:
         template = files("finlexpurple").joinpath(".env.example").read_text(encoding="utf-8")
     except (FileNotFoundError, ModuleNotFoundError, OSError) as exc:

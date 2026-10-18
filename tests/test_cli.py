@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
+from finlexpurple import cli
 from finlexpurple.cli import app
 
 runner = CliRunner()
@@ -64,4 +65,16 @@ def test_init_copies_template_from_package_data_and_does_not_overwrite(tmp_path,
     assert "LLM_PROVIDER=ollama" in created
     assert second.exit_code == 0
     assert "leaving it unchanged" in second.stdout
+    assert (tmp_path / ".env").read_text(encoding="utf-8") == "preserve-me\n"
+
+
+def test_init_existing_env_does_not_need_to_read_template(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("preserve-me\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "files", lambda _: (_ for _ in ()).throw(AssertionError("read template")))
+
+    result = runner.invoke(app, ["init"])
+
+    assert result.exit_code == 0
+    assert "leaving it unchanged" in result.stdout
     assert (tmp_path / ".env").read_text(encoding="utf-8") == "preserve-me\n"
