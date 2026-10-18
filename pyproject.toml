@@ -29,3 +29,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel.force-include]
 ".env.example" = "finlexpurple/.env.example"
+
+[tool.mypy]
+files = ["src/finlexpurple"]
+python_version = "3.10"
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
