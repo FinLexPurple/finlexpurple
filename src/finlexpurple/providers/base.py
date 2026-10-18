@@ -104,7 +104,7 @@ def raise_normalized_error(provider: str, exc: Exception) -> NoReturn:
     """Translate common SDK exception names and status codes without echoing secrets."""
 
     error_name = type(exc).__name__.lower()
-    status = getattr(exc, "status_code", None)
+    status = getattr(exc, "status_code", getattr(exc, "code", None))
     if "authentication" in error_name or status in (401, 403):
         raise InvalidAPIKeyError(f"{provider} rejected the configured API key.") from None
     if "ratelimit" in error_name or status == 429:
