@@ -81,6 +81,8 @@ def _apple_silicon_unified_memory() -> int:
 
 
 def _total_memory_bytes(system: str) -> int:
+    if sys.platform == "win32":
+        return _windows_total_memory()
     if system == "Windows":
         return _windows_total_memory()
     page_size = os.sysconf("SC_PAGE_SIZE")
