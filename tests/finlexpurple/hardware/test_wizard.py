@@ -68,6 +68,8 @@ def test_provider_rejection_reprompts_with_clear_message(
     assert result.exit_code == 0, result.output
     assert expected_message in result.output
     assert "Saved MODEL_TIER=" in result.output
+    if "local-8b-hybrid" in expected_message:
+        assert "Cloud fallback configuration for this tier is deferred to Phase 3" in result.output
 
 
 def facts(

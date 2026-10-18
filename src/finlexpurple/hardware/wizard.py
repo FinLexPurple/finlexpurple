@@ -150,4 +150,6 @@ def run_setup(
     if provider is not LLMProvider.OLLAMA:
         key_name = f"{provider.value.upper()}_API_KEY"
         typer.echo(f"Before using this provider, add {key_name} to {target}.")
+    if tier is ModelTier.LOCAL_8B_HYBRID:
+        typer.echo("Cloud fallback configuration for this tier is deferred to Phase 3.")
     return True
