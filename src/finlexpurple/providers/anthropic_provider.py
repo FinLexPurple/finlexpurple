@@ -51,15 +51,14 @@ class AnthropicProvider(LLMProvider):
         }
         if system_parts:
             params["system"] = "\n\n".join(system_parts)
-        if response_schema is not None:
-            params["output_config"] = {
-                "format": {
-                    "type": "json_schema",
-                    "schema": response_schema.model_json_schema(),
-                }
-            }
         try:
-            response = self._client.messages.create(**params)
+            if response_schema is None:
+                response = self._client.messages.create(**params)
+            else:
+                response = self._client.messages.parse(
+                    **params,
+                    output_format=response_schema,
+                )
         except APIError as exc:
             raise_normalized_error("Anthropic", exc)
 

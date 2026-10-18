@@ -43,6 +43,12 @@ class FakeMessages:
             raise self.error
         return self.response
 
+    def parse(self, **params):
+        self.params = params
+        if self.error:
+            raise self.error
+        return self.response
+
 
 def test_anthropic_plain_and_structured_completion() -> None:
     messages_api = FakeMessages()
@@ -55,7 +61,7 @@ def test_anthropic_plain_and_structured_completion() -> None:
 
     assert response.structured == Result(value=7)
     assert messages_api.params["system"] == "Be precise."
-    assert messages_api.params["output_config"]["format"]["schema"] == Result.model_json_schema()
+    assert messages_api.params["output_format"] is Result
 
 
 def test_anthropic_requires_key_without_echoing_it() -> None:
