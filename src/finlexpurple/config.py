@@ -11,6 +11,8 @@ from dotenv import load_dotenv
 from pydantic import Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from finlexpurple.hardware.tiers import ModelTier
+
 
 class LLMProvider(str, Enum):
     """Supported model providers."""
@@ -47,6 +49,7 @@ class Config(BaseSettings):
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     require_human_approval: bool = Field(default=True, validation_alias="REQUIRE_HUMAN_APPROVAL")
     telemetry_enabled: bool = Field(default=False, validation_alias="TELEMETRY_ENABLED")
+    model_tier: ModelTier | None = Field(default=None, validation_alias="MODEL_TIER")
 
     @field_validator("llm_provider", mode="before")
     @classmethod
@@ -58,6 +61,17 @@ class Config(BaseSettings):
                 raise ValueError(
                     f"invalid LLM_PROVIDER {value!r}; allowed providers: {choices}"
                 )
+            return normalized
+        return value
+
+    @field_validator("model_tier", mode="before")
+    @classmethod
+    def validate_model_tier(cls, value: Any) -> Any:
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            choices = ", ".join(tier.value for tier in ModelTier)
+            if normalized not in {tier.value for tier in ModelTier}:
+                raise ValueError(f"invalid MODEL_TIER {value!r}; allowed tiers: {choices}")
             return normalized
         return value
 
@@ -106,6 +120,7 @@ class Config(BaseSettings):
             "GEMINI_API_KEY",
             "REQUIRE_HUMAN_APPROVAL",
             "TELEMETRY_ENABLED",
+            "MODEL_TIER",
         }
         for name in config_names:
             if name in os.environ and not os.environ[name]:

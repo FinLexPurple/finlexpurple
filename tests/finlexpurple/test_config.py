@@ -18,6 +18,7 @@ _VARIABLES = (
     "GEMINI_API_KEY",
     "REQUIRE_HUMAN_APPROVAL",
     "TELEMETRY_ENABLED",
+    "MODEL_TIER",
 )
 
 
@@ -83,3 +84,23 @@ def test_invalid_boolean_names_field_and_value(tmp_path) -> None:
 
     assert "TELEMETRY_ENABLED" in str(error.value)
     assert "sometimes" in str(error.value)
+
+
+def test_model_tier_is_loaded_and_validated(tmp_path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("MODEL_TIER=local-3b-triage\n", encoding="utf-8")
+
+    assert Config.load(env_file).model_tier.value == "local-3b-triage"
+
+
+def test_empty_model_tier_is_unset_and_invalid_tier_is_specific(tmp_path) -> None:
+    os.environ["MODEL_TIER"] = ""
+    assert Config.load(tmp_path / ".env").model_tier is None
+    os.environ["MODEL_TIER"] = "other-tier"
+
+    with pytest.raises(ConfigurationError) as error:
+        Config.load(tmp_path / ".env")
+
+    assert "MODEL_TIER" in str(error.value)
+    assert "other-tier" in str(error.value)
+    assert "cloud, local-30b, local-8b-hybrid, local-3b-triage" in str(error.value)
