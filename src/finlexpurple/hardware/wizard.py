@@ -1,0 +1,135 @@
+"""Interactive hardware and model-tier setup wizard."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import typer
+from dotenv import dotenv_values, set_key
+
+from finlexpurple.config import LLMProvider
+from finlexpurple.hardware.detect import HardwareFacts, detect_hardware
+from finlexpurple.hardware.tiers import (
+    APPROXIMATE_MODEL_SIZES_GB,
+    ModelTier,
+    available_tiers,
+    recommend_tier,
+    recommendation_reason,
+)
+
+_PROVIDER_CHOICES = (
+    ("ollama", "Ollama (local)"),
+    ("anthropic", "Anthropic (cloud)"),
+    ("openai", "OpenAI (cloud)"),
+    ("openrouter", "OpenRouter (cloud)"),
+    ("gemini", "Google Gemini (cloud)"),
+)
+_TRIAGE_WARNING = (
+    "Warning: local-3b-triage is triage-only. It flags findings for stronger review, "
+    "does not perform full exploitation reasoning, and has materially lower accuracy "
+    "than cloud or GPU-backed options."
+)
+
+
+def _prompt_index(label: str, choices: tuple[str, ...], default: int = 1) -> int:
+    for index, choice in enumerate(choices, start=1):
+        typer.echo(f"  {index}. {choice}")
+    while True:
+        raw = typer.prompt(f"{label} [1-{len(choices)}]", default=str(default)).strip()
+        try:
+            selected = int(raw)
+        except ValueError:
+            typer.echo("Enter one of the listed numbers.")
+            continue
+        if 1 <= selected <= len(choices):
+            return selected - 1
+        typer.echo("Enter one of the listed numbers.")
+
+
+def _choose_tier(hardware: HardwareFacts, recommendation: ModelTier) -> ModelTier:
+    options = available_tiers(hardware)
+    labels = tuple(
+        f"{tier.value} (recommended)" if tier is recommendation else tier.value
+        for tier in options
+    )
+    while True:
+        selected = options[_prompt_index("Choose a model tier", labels)]
+        if selected is ModelTier.LOCAL_3B_TRIAGE:
+            typer.echo(_TRIAGE_WARNING)
+            if not typer.confirm("Continue with the triage-only tier?", default=False):
+                continue
+        return selected
+
+
+def _choose_provider() -> LLMProvider:
+    labels = tuple(label for _, label in _PROVIDER_CHOICES)
+    name = _PROVIDER_CHOICES[_prompt_index("Choose a provider", labels)][0]
+    return LLMProvider(name)
+
+
+def _persist_selections(env_path: Path, tier: ModelTier, provider: LLMProvider) -> bool:
+    """Persist the selections, asking before changing any nonempty .env values."""
+
+    updates = {"MODEL_TIER": tier.value, "LLM_PROVIDER": provider.value}
+    try:
+        existing = dotenv_values(env_path) if env_path.exists() else {}
+        for key, value in updates.items():
+            old_value = existing.get(key)
+            if old_value and old_value.strip() != value and not typer.confirm(
+                f".env already sets {key}={old_value}. Replace it with {value}?",
+                default=False,
+            ):
+                typer.echo(f"Existing {key} preserved; setup selections were not saved.")
+                return False
+        for key, value in updates.items():
+            set_key(env_path, key, value, quote_mode="auto", encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Could not save setup selections to {env_path}: {exc}", err=True)
+        return False
+    return True
+
+
+def _show_hardware(hardware: HardwareFacts) -> None:
+    typer.echo(f"Operating system: {hardware.operating_system}")
+    typer.echo(f"Total system RAM: {hardware.total_ram_gb:.1f} GB")
+    if hardware.gpu_kind == "none":
+        typer.echo("GPU: no dedicated GPU detected")
+    else:
+        memory_label = "unified memory" if hardware.gpu_kind == "apple_silicon" else "VRAM"
+        typer.echo(f"GPU: {hardware.gpu_name} ({hardware.gpu_memory_gb:.1f} GB {memory_label})")
+    typer.echo(f"Ollama model directory: {hardware.model_directory}")
+    typer.echo(
+        f"Free disk space: {hardware.free_disk_gb:.1f} GB "
+        f"(checked at {hardware.disk_checked_path})"
+    )
+
+
+def run_setup(
+    env_path: Path | None = None,
+    hardware: HardwareFacts | None = None,
+) -> bool:
+    """Run setup interactively and return whether its choices were persisted."""
+
+    facts = hardware or detect_hardware()
+    _show_hardware(facts)
+    recommendation = recommend_tier(facts)
+    typer.echo(f"Recommended tier: {recommendation.value}. {recommendation_reason(facts, recommendation)}")
+    tier = _choose_tier(facts, recommendation)
+    provider = _choose_provider()
+
+    needed = APPROXIMATE_MODEL_SIZES_GB.get(tier.value)
+    if needed is not None and facts.free_disk_gb < needed:
+        typer.echo(
+            f"Warning: {tier.value} needs approximately {needed:g} GB for a model; "
+            f"only {facts.free_disk_gb:.1f} GB is free at {facts.disk_checked_path}. "
+            "You can continue, but there may not be enough space to download it."
+        )
+
+    target = env_path or (Path.cwd() / ".env")
+    if not _persist_selections(target, tier, provider):
+        return False
+    typer.echo(f"Saved MODEL_TIER={tier.value} and LLM_PROVIDER={provider.value} to {target}.")
+    if provider is not LLMProvider.OLLAMA:
+        key_name = f"{provider.value.upper()}_API_KEY"
+        typer.echo(f"Before using this provider, add {key_name} to {target}.")
+    return True
