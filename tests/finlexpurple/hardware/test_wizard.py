@@ -33,7 +33,6 @@ def test_every_tier_provider_pairing(
 @pytest.mark.parametrize(
     ("inputs", "gpu_kind", "gpu_memory", "expected_message"),
     [
-        ("1\n1\n2\n", "none", None, "cloud tier requires a cloud provider"),
         (
             "1\n2\n1\n",
             "nvidia",
@@ -97,13 +96,22 @@ def run_setup(monkeypatch, tmp_path: Path, inputs: str, hardware: HardwareFacts)
 
 
 def test_no_gpu_low_ram_only_offers_cloud_and_persists_choices(monkeypatch, tmp_path) -> None:
-    result = run_setup(monkeypatch, tmp_path, "1\n2\n", facts(ram=7.9))
+    result = run_setup(monkeypatch, tmp_path, "1\n1\n", facts(ram=7.9))
 
     assert result.exit_code == 0, result.output
     assert "local-3b-triage" not in result.output
     assert "Ollama model directory: /synthetic/models" in result.output
     assert "checked at /synthetic" in result.output
     assert "MODEL_TIER=cloud" in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=anthropic" in (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "Ollama (local)" not in result.output
+
+
+def test_cloud_tier_defaults_to_first_cloud_provider(monkeypatch, tmp_path) -> None:
+    result = run_setup(monkeypatch, tmp_path, "1\n\n", facts(ram=4))
+
+    assert result.exit_code == 0, result.output
+    assert "1. Anthropic (cloud)" in result.output
     assert "LLM_PROVIDER=anthropic" in (tmp_path / ".env").read_text(encoding="utf-8")
 
 
@@ -139,7 +147,7 @@ def test_existing_env_values_are_updated_only_after_approval(monkeypatch, tmp_pa
     env_file = tmp_path / ".env"
     env_file.write_text("MODEL_TIER=local-3b-triage\nLLM_PROVIDER=openai\n", encoding="utf-8")
 
-    result = run_setup(monkeypatch, tmp_path, "1\n5\ny\ny\n", facts())
+    result = run_setup(monkeypatch, tmp_path, "1\n4\ny\ny\n", facts())
 
     assert result.exit_code == 0, result.output
     saved = env_file.read_text(encoding="utf-8")

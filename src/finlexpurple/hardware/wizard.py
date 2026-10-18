@@ -75,9 +75,10 @@ def _provider_incompatibility(tier: ModelTier, provider: LLMProvider) -> str | N
 
 
 def _choose_provider(tier: ModelTier) -> LLMProvider:
-    labels = tuple(label for _, label in _PROVIDER_CHOICES)
+    choices = _PROVIDER_CHOICES[1:] if tier is ModelTier.CLOUD else _PROVIDER_CHOICES
+    labels = tuple(label for _, label in choices)
     while True:
-        name = _PROVIDER_CHOICES[_prompt_index("Choose a provider", labels)][0]
+        name = choices[_prompt_index("Choose a provider", labels)][0]
         provider = LLMProvider(name)
         error = _provider_incompatibility(tier, provider)
         if error is None:
