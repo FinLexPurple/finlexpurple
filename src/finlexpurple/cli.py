@@ -9,6 +9,7 @@ from typing import Annotated
 import typer
 
 from finlexpurple import __version__
+from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
@@ -43,9 +44,10 @@ def _stub(command: str, phase: int) -> None:
 
 @app.command()
 def setup() -> None:
-    """Configure hardware and model provider (implemented in Phase 2/3)."""
+    """Configure hardware tier and model provider."""
 
-    _stub("setup", 2)
+    if not run_setup():
+        raise typer.Exit(code=1)
 
 
 @app.command()

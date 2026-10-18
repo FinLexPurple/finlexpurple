@@ -28,7 +28,6 @@ def test_version_prints_current_version() -> None:
 
 def test_stubs_exit_successfully_with_phase_message() -> None:
     commands = {
-        "setup": "Phase 2",
         "scan": "Phase 4",
         "telemetry show": "Phase 14",
         "telemetry on": "Phase 14",
@@ -42,9 +41,20 @@ def test_stubs_exit_successfully_with_phase_message() -> None:
         assert phase in result.stdout
 
 
+def test_setup_runs_phase_two_wizard(monkeypatch) -> None:
+    called: list[bool] = []
+    monkeypatch.setattr("finlexpurple.cli.run_setup", lambda: called.append(True) or True)
+
+    result = runner.invoke(app, ["setup"])
+
+    assert result.exit_code == 0
+    assert called == [True]
+
+
 def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     seen: list[bool] = []
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
+    monkeypatch.setattr("finlexpurple.cli.run_setup", lambda: True)
 
     for command in ("setup", "scan", "telemetry show", "feedback"):
         result = runner.invoke(app, ["--json-logs", *command.split()])
