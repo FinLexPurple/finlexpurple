@@ -130,11 +130,13 @@ def test_scan_confirms_local_directory_target_through_same_flow(tmp_path, monkey
     monkeypatch.setattr(
         "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
     )
-    result = runner.invoke(app, ["scan", "--target", str(tmp_path)], input="y\n")
+    target_dir = tmp_path / "MiXeDProject"
+    target_dir.mkdir()
+    result = runner.invoke(app, ["scan", "--target", str(target_dir)], input="y\n")
     output = strip_ansi(result.output)
 
     assert result.exit_code == 0, output
-    assert f"Resolved target: {tmp_path.resolve()}" in output
+    assert f"Resolved target: {target_dir.resolve()}" in output
     assert "Scope confirmed. Scanning is not implemented yet." in output
 
 

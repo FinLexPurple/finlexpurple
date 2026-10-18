@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import ntpath
+import os
 from pathlib import Path
 
 import pytest
 import typer
 
+from finlexpurple.scope import models as scope_models
 from finlexpurple.scope.confirm import (
     ScopeStorageError,
     _cache_path,
@@ -103,8 +106,32 @@ def test_local_directory_uses_the_same_confirmation_flow(monkeypatch, tmp_path: 
 
     assert confirmed is not None
     assert confirmed.target.kind == "directory"
-    assert confirmed.allow_paths == (str(target_dir.resolve()),)
+    assert confirmed.allow_paths == (os.path.normcase(str(target_dir.resolve())),)
     assert not any("Subdomains intended for enumeration" in line for line in output)
+
+
+def test_windows_case_variants_share_scope_and_cache_key(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(scope_models.os.path, "normcase", ntpath.normcase)
+    output, _ = _patch_prompts(monkeypatch, [True])
+    uppercase = tmp_path / "Project"
+    lowercase = tmp_path / "project"
+    uppercase.mkdir()
+    lowercase.mkdir()
+
+    first_target = Target.parse(uppercase)
+    second_target = Target.parse(lowercase)
+    cache = tmp_path / "scopes"
+    first = confirm_scope(first_target, cache_directory=cache)
+    second = confirm_scope(second_target, cache_directory=cache)
+
+    assert first_target.canonical == ntpath.normcase(str(uppercase.resolve()))
+    assert second_target.canonical == first_target.canonical
+    assert first is not None and second is not None
+    assert first.allow_paths == second.allow_paths
+    assert first.target.local_path == uppercase.resolve()
+    assert second.target.local_path == lowercase.resolve()
+    assert _cache_path(first_target, cache) == _cache_path(second_target, cache)
+    assert any(f"Scope already confirmed: {lowercase.resolve()}" == line for line in output)
 
 
 def test_unwritable_cache_does_not_return_confirmed_scope(monkeypatch, tmp_path: Path) -> None:

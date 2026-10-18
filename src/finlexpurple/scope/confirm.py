@@ -45,11 +45,25 @@ def _load_cached_scope(target: Target, cache_directory: Path | None) -> ScopeDef
     except (OSError, ValueError, ValidationError):
         return None
     expected = ScopeDefinition.for_target(target)
-    if cached.first_confirmed_at is None or cached.model_copy(
-        update={"first_confirmed_at": None}
-    ) != expected:
+    if (
+        cached.target.kind != target.kind
+        or cached.target.canonical != target.canonical
+        or cached.first_confirmed_at is None
+        or cached.allow_hosts != expected.allow_hosts
+        or cached.allow_networks != expected.allow_networks
+        or cached.allow_paths != expected.allow_paths
+        or cached.deny_hosts != expected.deny_hosts
+        or cached.deny_networks != expected.deny_networks
+        or cached.deny_paths != expected.deny_paths
+    ):
         return None
-    return cached
+    return cached.model_copy(update={"target": target})
+
+
+def _display_target(target: Target) -> str:
+    if target.kind == "directory":
+        return str(target.local_path)
+    return target.canonical
 
 
 def _save_scope(scope: ScopeDefinition, cache_directory: Path | None) -> None:
@@ -88,11 +102,11 @@ def confirm_scope(
     if cached is not None:
         confirmed_at = cached.first_confirmed_at
         if confirmed_at is not None:
-            typer.echo(f"Scope already confirmed: {target.canonical}")
+            typer.echo(f"Scope already confirmed: {_display_target(target)}")
             typer.echo(f"First confirmed at: {confirmed_at.isoformat()}")
             return cached
 
-    typer.echo(f"Resolved target: {target.canonical}")
+    typer.echo(f"Resolved target: {_display_target(target)}")
     if target.kind == "url":
         typer.echo("Subdomains intended for enumeration: none (exact target only).")
         typer.echo(
@@ -111,5 +125,5 @@ def confirm_scope(
 
     confirmed = ScopeDefinition.for_target(target).confirmed()
     _save_scope(confirmed, cache_directory)
-    typer.echo(f"Scope confirmation saved locally for {target.canonical}.")
+    typer.echo(f"Scope confirmation saved locally for {_display_target(target)}.")
     return confirmed
