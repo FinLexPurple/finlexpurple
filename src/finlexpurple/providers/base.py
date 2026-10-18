@@ -110,7 +110,7 @@ def raise_normalized_error(provider: str, exc: Exception) -> NoReturn:
     if "ratelimit" in error_name or status == 429:
         raise RateLimitError(f"{provider} rate limit or quota was reached.") from None
     if (
-        any(marker in error_name for marker in ("connection", "timeout", "network"))
+        any(marker in error_name for marker in ("connect", "connection", "timeout", "network"))
         or isinstance(status, int)
         and status >= 500
     ):
