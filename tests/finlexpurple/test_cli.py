@@ -34,9 +34,8 @@ def test_version_prints_current_version() -> None:
     assert strip_ansi(result.stdout).strip() == "0.0.1"
 
 
-def test_stubs_exit_successfully_with_phase_message() -> None:
+def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
     commands = {
-        "scan": "Phase 4",
         "telemetry show": "Phase 14",
         "telemetry on": "Phase 14",
         "telemetry off": "Phase 14",
@@ -64,12 +63,88 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     seen: list[bool] = []
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
     monkeypatch.setattr("finlexpurple.cli.run_setup", lambda: True)
+    monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target: object())
 
-    for command in ("setup", "scan", "telemetry show", "feedback"):
-        result = runner.invoke(app, ["--json-logs", *command.split()])
+    commands = (
+        ["setup"],
+        ["scan", "--target", "https://example.com/"],
+        ["telemetry", "show"],
+        ["feedback"],
+    )
+    for command in commands:
+        result = runner.invoke(app, ["--json-logs", *command])
         assert result.exit_code == 0
 
     assert seen == [True, True, True, True]
+
+
+def test_scan_requires_target_option() -> None:
+    result = runner.invoke(app, ["scan"])
+
+    assert result.exit_code == 2
+    assert "--target" in strip_ansi(result.output)
+
+
+def test_scan_confirms_scope_then_reports_stub_behavior(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    result = runner.invoke(app, ["scan", "--target", "https://example.com/app"], input="y\n")
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "Resolved target: https://example.com/app" in output
+    assert "Subdomains intended for enumeration: none" in output
+    assert "Scope confirmed. Scanning is not implemented yet." in output
+    assert len(list((tmp_path / "user-config").glob("*.json"))) == 1
+
+
+def test_scan_uses_cached_confirmation_without_prompting_again(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    first = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="y\n")
+    second = runner.invoke(app, ["scan", "--target", "https://example.com:443/"])
+
+    assert first.exit_code == 0, strip_ansi(first.output)
+    assert second.exit_code == 0, strip_ansi(second.output)
+    assert "Scope already confirmed" in strip_ansi(second.output)
+
+
+def test_scan_decline_stops_before_starting_or_caching(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    result = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="n\n")
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 1
+    assert "Scope was not confirmed; no scan was started." in output
+    assert "Scanning is not implemented" not in output
+    assert not (tmp_path / "user-config").exists()
+
+
+def test_scan_confirms_local_directory_target_through_same_flow(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    result = runner.invoke(app, ["scan", "--target", str(tmp_path)], input="y\n")
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 0, output
+    assert f"Resolved target: {tmp_path.resolve()}" in output
+    assert "Scope confirmed. Scanning is not implemented yet." in output
+
+
+def test_scan_rejects_invalid_target(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    result = runner.invoke(app, ["scan", "--target", "ftp://example.com/"])
+
+    assert result.exit_code == 2
+    assert "Invalid target" in strip_ansi(result.output)
+    assert not (tmp_path / "user-config").exists()
 
 
 def test_init_copies_template_from_package_data_and_does_not_overwrite(tmp_path, monkeypatch) -> None:

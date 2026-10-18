@@ -11,6 +11,8 @@ import typer
 from finlexpurple import __version__
 from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
+from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
+from finlexpurple.scope.models import InvalidTargetError, Target
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
 telemetry_app = typer.Typer(help="Manage optional telemetry.", no_args_is_help=True)
@@ -73,10 +75,27 @@ def init() -> None:
 
 
 @app.command()
-def scan() -> None:
-    """Scan a target (scope confirmation is added in Phase 4)."""
+def scan(
+    target: Annotated[
+        str,
+        typer.Option("--target", help="URL, IP/CIDR, or existing local directory to scope."),
+    ],
+) -> None:
+    """Confirm a target's scope (scanning is added in later phases)."""
 
-    _stub("scan", 4)
+    try:
+        normalized_target = Target.parse(target)
+        confirmed_scope = confirm_scope(normalized_target)
+    except InvalidTargetError as exc:
+        typer.echo(f"Invalid target: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    except ScopeStorageError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if confirmed_scope is None:
+        typer.echo("Scope was not confirmed; no scan was started.", err=True)
+        raise typer.Exit(code=1)
+    typer.echo("Scope confirmed. Scanning is not implemented yet.")
 
 
 @telemetry_app.command()
