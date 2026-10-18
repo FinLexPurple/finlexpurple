@@ -95,7 +95,7 @@ def test_scope_change_invalidates_cached_confirmation(monkeypatch, tmp_path: Pat
 
 
 def test_local_directory_uses_the_same_confirmation_flow(monkeypatch, tmp_path: Path) -> None:
-    _patch_prompts(monkeypatch, [True])
+    output, _ = _patch_prompts(monkeypatch, [True])
     target_dir = tmp_path / "source"
     target_dir.mkdir()
 
@@ -104,6 +104,7 @@ def test_local_directory_uses_the_same_confirmation_flow(monkeypatch, tmp_path: 
     assert confirmed is not None
     assert confirmed.target.kind == "directory"
     assert confirmed.allow_paths == (str(target_dir.resolve()),)
+    assert not any("Subdomains intended for enumeration" in line for line in output)
 
 
 def test_unwritable_cache_does_not_return_confirmed_scope(monkeypatch, tmp_path: Path) -> None:

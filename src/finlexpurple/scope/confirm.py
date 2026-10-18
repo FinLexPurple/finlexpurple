@@ -93,8 +93,8 @@ def confirm_scope(
             return cached
 
     typer.echo(f"Resolved target: {target.canonical}")
-    typer.echo("Subdomains intended for enumeration: none (exact target only).")
     if target.kind == "url":
+        typer.echo("Subdomains intended for enumeration: none (exact target only).")
         typer.echo(
             f"Allowed URL boundary: exact host {target.host}, same scheme and port, "
             f"path {target.path} and its descendants."
