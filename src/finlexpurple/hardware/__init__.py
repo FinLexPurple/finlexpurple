@@ -1,1 +1,1 @@
-"""Hardware detection and recommendation modules are added in Phase 2."""
+"""Hardware detection and model-tier recommendation."""

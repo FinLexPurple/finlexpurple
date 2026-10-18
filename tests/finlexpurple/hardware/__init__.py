@@ -1,1 +1,1 @@
-"""Hardware tests are added in Phase 2."""
+"""Tests for hardware detection and tier recommendations."""
