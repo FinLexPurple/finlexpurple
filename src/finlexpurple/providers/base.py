@@ -62,6 +62,10 @@ class MissingModelError(ProviderError):
     """A model name required by the selected provider is not configured."""
 
 
+class UnsupportedProviderError(ProviderError):
+    """The configured provider has no implementation in this package."""
+
+
 class LLMProvider(ABC):
     """Provider-independent completion interface used by later phases."""
 
