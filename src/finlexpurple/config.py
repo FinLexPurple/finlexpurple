@@ -49,6 +49,9 @@ class Config(BaseSettings):
         default="openai/gpt-6-luna", validation_alias="OPENROUTER_MODEL"
     )
     gemini_model: str = Field(default="gemini-3.8-flash", validation_alias="GEMINI_MODEL")
+    fallback_llm_provider: LLMProvider | None = Field(
+        default=None, validation_alias="FALLBACK_LLM_PROVIDER"
+    )
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openrouter_api_key: str | None = Field(default=None, validation_alias="OPENROUTER_API_KEY")
@@ -66,6 +69,22 @@ class Config(BaseSettings):
             if normalized not in {provider.value for provider in LLMProvider}:
                 raise ValueError(
                     f"invalid LLM_PROVIDER {value!r}; allowed providers: {choices}"
+                )
+            return normalized
+        return value
+
+    @field_validator("fallback_llm_provider", mode="before")
+    @classmethod
+    def validate_fallback_provider(cls, value: Any) -> Any:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            cloud_providers = {provider.value for provider in LLMProvider if provider is not LLMProvider.OLLAMA}
+            if normalized not in cloud_providers:
+                choices = ", ".join(sorted(cloud_providers))
+                raise ValueError(
+                    f"invalid FALLBACK_LLM_PROVIDER {value!r}; allowed cloud providers: {choices}"
                 )
             return normalized
         return value
@@ -108,6 +127,17 @@ class Config(BaseSettings):
         required_key = key_by_provider.get(self.llm_provider)
         if required_key and not (required_key[1] and required_key[1].strip()):
             raise ValueError(f"{required_key[0]} is required when LLM_PROVIDER={self.llm_provider.value}")
+        if self.fallback_llm_provider is not None:
+            if self.model_tier is not ModelTier.LOCAL_8B_HYBRID:
+                raise ValueError(
+                    "FALLBACK_LLM_PROVIDER is only supported when MODEL_TIER=local-8b-hybrid"
+                )
+            fallback_key = key_by_provider[self.fallback_llm_provider]
+            if fallback_key and not (fallback_key[1] and fallback_key[1].strip()):
+                raise ValueError(
+                    f"{fallback_key[0]} is required when FALLBACK_LLM_PROVIDER="
+                    f"{self.fallback_llm_provider.value}"
+                )
         return self
 
     @classmethod
@@ -124,6 +154,7 @@ class Config(BaseSettings):
             "OPENAI_MODEL",
             "OPENROUTER_MODEL",
             "GEMINI_MODEL",
+            "FALLBACK_LLM_PROVIDER",
             "ANTHROPIC_API_KEY",
             "OPENAI_API_KEY",
             "OPENROUTER_API_KEY",

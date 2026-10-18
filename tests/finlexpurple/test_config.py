@@ -23,6 +23,7 @@ _VARIABLES = (
     "REQUIRE_HUMAN_APPROVAL",
     "TELEMETRY_ENABLED",
     "MODEL_TIER",
+    "FALLBACK_LLM_PROVIDER",
 )
 
 
@@ -128,3 +129,38 @@ def test_empty_model_tier_is_unset_and_invalid_tier_is_specific(tmp_path) -> Non
     assert "MODEL_TIER" in str(error.value)
     assert "other-tier" in str(error.value)
     assert "cloud, local-30b, local-8b-hybrid, local-3b-triage" in str(error.value)
+
+
+def test_optional_cloud_fallback_is_loaded_for_hybrid_tier(tmp_path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "MODEL_TIER=local-8b-hybrid\nFALLBACK_LLM_PROVIDER=openrouter\n"
+        "OPENROUTER_API_KEY=test-key\n",
+        encoding="utf-8",
+    )
+
+    config = Config.load(env_file)
+
+    assert config.fallback_llm_provider.value == "openrouter"
+    assert config.llm_provider.value == "ollama"
+
+
+@pytest.mark.parametrize(
+    ("tier", "fallback", "key", "message"),
+    [
+        ("local-8b-hybrid", "ollama", "", "allowed cloud providers"),
+        ("local-8b-hybrid", "openai", "", "OPENAI_API_KEY"),
+        ("local-30b", "openai", "key", "only supported when MODEL_TIER=local-8b-hybrid"),
+    ],
+)
+def test_invalid_fallback_configuration_is_rejected(
+    tmp_path, tier: str, fallback: str, key: str, message: str
+) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        f"MODEL_TIER={tier}\nFALLBACK_LLM_PROVIDER={fallback}\nOPENAI_API_KEY={key}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError, match=message):
+        Config.load(env_file)
