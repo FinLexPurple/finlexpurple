@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Literal, TypeVar
+from typing import Literal, NoReturn, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
@@ -100,7 +100,7 @@ def make_response(
     return LLMResponse(content=content, model=model, structured=structured, usage=usage)
 
 
-def raise_normalized_error(provider: str, exc: Exception) -> None:
+def raise_normalized_error(provider: str, exc: Exception) -> NoReturn:
     """Translate common SDK exception names and status codes without echoing secrets."""
 
     error_name = type(exc).__name__.lower()
