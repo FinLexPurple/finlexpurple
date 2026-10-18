@@ -132,6 +132,10 @@ class Config(BaseSettings):
                 raise ValueError(
                     "FALLBACK_LLM_PROVIDER is only supported when MODEL_TIER=local-8b-hybrid"
                 )
+            if self.fallback_llm_provider is self.llm_provider:
+                raise ValueError(
+                    "FALLBACK_LLM_PROVIDER must differ from LLM_PROVIDER"
+                )
             fallback_key = key_by_provider[self.fallback_llm_provider]
             if fallback_key and not (fallback_key[1] and fallback_key[1].strip()):
                 raise ValueError(

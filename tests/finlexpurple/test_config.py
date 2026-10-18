@@ -146,19 +146,33 @@ def test_optional_cloud_fallback_is_loaded_for_hybrid_tier(tmp_path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("tier", "fallback", "key", "message"),
+    ("tier", "primary", "fallback", "key", "message"),
     [
-        ("local-8b-hybrid", "ollama", "", "allowed cloud providers"),
-        ("local-8b-hybrid", "openai", "", "OPENAI_API_KEY"),
-        ("local-30b", "openai", "key", "only supported when MODEL_TIER=local-8b-hybrid"),
+        ("local-8b-hybrid", "ollama", "ollama", "", "allowed cloud providers"),
+        ("local-8b-hybrid", "ollama", "openai", "", "OPENAI_API_KEY"),
+        (
+            "local-30b",
+            "ollama",
+            "openai",
+            "key",
+            "only supported when MODEL_TIER=local-8b-hybrid",
+        ),
+        (
+            "local-8b-hybrid",
+            "openai",
+            "openai",
+            "key",
+            "FALLBACK_LLM_PROVIDER must differ from LLM_PROVIDER",
+        ),
     ],
 )
 def test_invalid_fallback_configuration_is_rejected(
-    tmp_path, tier: str, fallback: str, key: str, message: str
+    tmp_path, tier: str, primary: str, fallback: str, key: str, message: str
 ) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        f"MODEL_TIER={tier}\nFALLBACK_LLM_PROVIDER={fallback}\nOPENAI_API_KEY={key}\n",
+        f"MODEL_TIER={tier}\nLLM_PROVIDER={primary}\nFALLBACK_LLM_PROVIDER={fallback}\n"
+        f"OPENAI_API_KEY={key}\n",
         encoding="utf-8",
     )
 
