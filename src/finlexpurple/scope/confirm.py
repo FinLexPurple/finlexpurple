@@ -94,7 +94,18 @@ def confirm_scope(
 
     typer.echo(f"Resolved target: {target.canonical}")
     typer.echo("Subdomains intended for enumeration: none (exact target only).")
-    typer.echo("Only this target and its normalized path or network/directory boundary will be in scope.")
+    if target.kind == "url":
+        typer.echo(
+            f"Allowed URL boundary: exact host {target.host}, same scheme and port, "
+            f"path {target.path} and its descendants."
+        )
+    elif target.kind == "network":
+        typer.echo(f"Allowed IP boundary: {target.network}.")
+    else:
+        typer.echo(
+            f"Allowed filesystem boundary: {target.local_path} and descendants "
+            "after resolving symlinks."
+        )
     if not typer.confirm("Do you confirm that you are authorized to test this exact target?", default=False):
         return None
 

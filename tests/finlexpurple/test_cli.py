@@ -95,6 +95,8 @@ def test_scan_confirms_scope_then_reports_stub_behavior(tmp_path, monkeypatch) -
     assert result.exit_code == 0, output
     assert "Resolved target: https://example.com/app" in output
     assert "Subdomains intended for enumeration: none" in output
+    assert "path /app and its descendants" in output
+    assert "exact host example.com" in output
     assert "Scope confirmed. Scanning is not implemented yet." in output
     assert len(list((tmp_path / "user-config").glob("*.json"))) == 1
 
