@@ -61,10 +61,28 @@ def _choose_tier(hardware: HardwareFacts, recommendation: ModelTier) -> ModelTie
         return selected
 
 
-def _choose_provider() -> LLMProvider:
+def _provider_incompatibility(tier: ModelTier, provider: LLMProvider) -> str | None:
+    if tier is ModelTier.CLOUD and provider is LLMProvider.OLLAMA:
+        return "The cloud tier requires a cloud provider; Ollama is incompatible."
+    if tier is not ModelTier.CLOUD and provider is not LLMProvider.OLLAMA:
+        if tier is ModelTier.LOCAL_8B_HYBRID:
+            return (
+                "The local-8b-hybrid tier currently requires Ollama; its cloud fallback "
+                "will be configured in Phase 3."
+            )
+        return f"The {tier.value} tier requires Ollama; cloud providers are incompatible."
+    return None
+
+
+def _choose_provider(tier: ModelTier) -> LLMProvider:
     labels = tuple(label for _, label in _PROVIDER_CHOICES)
-    name = _PROVIDER_CHOICES[_prompt_index("Choose a provider", labels)][0]
-    return LLMProvider(name)
+    while True:
+        name = _PROVIDER_CHOICES[_prompt_index("Choose a provider", labels)][0]
+        provider = LLMProvider(name)
+        error = _provider_incompatibility(tier, provider)
+        if error is None:
+            return provider
+        typer.echo(error)
 
 
 def _persist_selections(env_path: Path, tier: ModelTier, provider: LLMProvider) -> bool:
@@ -115,7 +133,7 @@ def run_setup(
     recommendation = recommend_tier(facts)
     typer.echo(f"Recommended tier: {recommendation.value}. {recommendation_reason(facts, recommendation)}")
     tier = _choose_tier(facts, recommendation)
-    provider = _choose_provider()
+    provider = _choose_provider(tier)
 
     needed = APPROXIMATE_MODEL_SIZES_GB.get(tier.value)
     if needed is not None and facts.free_disk_gb < needed:
