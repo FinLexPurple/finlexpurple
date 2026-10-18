@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,7 +48,12 @@ def _windows_total_memory() -> int:
     status = MemoryStatus()
     status.dwLength = ctypes.sizeof(status)
     windows_api = getattr(ctypes, "windll", None)
-    if windows_api is None or not windows_api.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+    if windows_api is None:
+        raise OSError("GlobalMemoryStatusEx is unavailable")
+    memory_status_ex = windows_api.kernel32.GlobalMemoryStatusEx
+    memory_status_ex.argtypes = [ctypes.POINTER(MemoryStatus)]
+    memory_status_ex.restype = ctypes.c_int
+    if not memory_status_ex(ctypes.byref(status)):
         raise OSError("GlobalMemoryStatusEx failed")
     return int(status.ullTotalPhys)
 
@@ -80,6 +86,18 @@ def _total_memory_bytes(system: str) -> int:
     page_size = os.sysconf("SC_PAGE_SIZE")
     physical_pages = os.sysconf("SC_PHYS_PAGES")
     return int(page_size * physical_pages)
+
+
+def _operating_system_label() -> str:
+    system = platform.system()
+    if system == "Windows":
+        get_windows_version = getattr(sys, "getwindowsversion", None)
+        if get_windows_version is None:
+            return "Windows (build unavailable)"
+        version = get_windows_version()
+        name = "Windows 11" if version.build >= 22000 else f"Windows {version.major}"
+        return f"{name} (build {version.build})"
+    return platform.platform()
 
 
 def _model_directory() -> Path:
@@ -171,5 +189,5 @@ def detect_hardware() -> HardwareFacts:
         gpu_kind=gpu_kind,
         gpu_name=gpu_name,
         gpu_memory_gb=gpu_memory,
-        operating_system=platform.platform(),
+        operating_system=_operating_system_label(),
     )

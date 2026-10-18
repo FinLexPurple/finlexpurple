@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from finlexpurple.hardware import detect
 
 
@@ -42,7 +44,10 @@ def test_defaults_model_directory_by_platform(monkeypatch, tmp_path: Path) -> No
     assert detect._model_directory() == tmp_path / ".ollama" / "models"
 
 
-def test_detects_apple_silicon_unified_memory(monkeypatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("memory_gb", [16, 24])
+def test_detects_apple_silicon_unified_memory(
+    monkeypatch, tmp_path: Path, memory_gb: int
+) -> None:
     model_dir = tmp_path / "models"
     model_dir.mkdir()
     monkeypatch.setenv("OLLAMA_MODELS", str(model_dir))
@@ -50,7 +55,11 @@ def test_detects_apple_silicon_unified_memory(monkeypatch, tmp_path: Path) -> No
     monkeypatch.setattr(detect.platform, "machine", lambda: "arm64")
     monkeypatch.setattr(detect.platform, "platform", lambda: "macOS synthetic")
     monkeypatch.setattr(detect, "_total_memory_bytes", lambda _: 8 * detect._GIB)
-    monkeypatch.setattr(detect, "_apple_silicon_unified_memory", lambda: 16 * detect._GIB)
+    monkeypatch.setattr(
+        detect,
+        "_apple_silicon_unified_memory",
+        lambda: memory_gb * detect._GIB,
+    )
     monkeypatch.setattr(detect, "_nvidia_gpu", lambda: None)
     monkeypatch.setattr(
         detect.shutil,
@@ -60,10 +69,28 @@ def test_detects_apple_silicon_unified_memory(monkeypatch, tmp_path: Path) -> No
 
     facts = detect.detect_hardware()
 
-    assert facts.total_ram_gb == 16
+    assert facts.total_ram_gb == memory_gb
     assert facts.gpu_kind == "apple_silicon"
-    assert facts.gpu_memory_gb == 16
+    assert facts.gpu_memory_gb == memory_gb
     assert facts.disk_checked_path == model_dir
+
+
+@pytest.mark.parametrize(
+    ("build", "expected"),
+    [(21999, "Windows 10"), (22000, "Windows 11"), (26100, "Windows 11")],
+)
+def test_windows_version_label_uses_build_number(
+    monkeypatch, build: int, expected: str
+) -> None:
+    monkeypatch.setattr(detect.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(
+        detect.sys,
+        "getwindowsversion",
+        lambda: SimpleNamespace(major=10, build=build),
+        raising=False,
+    )
+
+    assert detect._operating_system_label() == f"{expected} (build {build})"
 
 
 def test_no_gpu_is_reported_when_nvidia_is_unavailable(monkeypatch, tmp_path: Path) -> None:
