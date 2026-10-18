@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import os
+from collections.abc import Callable
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -25,11 +26,18 @@ def _url_path_contains(root: str, candidate: str) -> bool:
     )
 
 
-def _filesystem_path_contains(root: str, candidate: str) -> bool:
-    normalized_root = os.path.normcase(os.path.abspath(root))
-    normalized_candidate = os.path.normcase(os.path.abspath(candidate))
+def _filesystem_path_contains(
+    root: str,
+    candidate: str,
+    *,
+    normcase: Callable[[str], str] = os.path.normcase,
+    abspath: Callable[[str], str] = os.path.abspath,
+    commonpath: Callable[[tuple[str, str]], str] = os.path.commonpath,
+) -> bool:
+    normalized_root = normcase(abspath(root))
+    normalized_candidate = normcase(abspath(candidate))
     try:
-        return os.path.commonpath((normalized_root, normalized_candidate)) == normalized_root
+        return commonpath((normalized_root, normalized_candidate)) == normalized_root
     except ValueError:
         return False
 

@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import logging
+import ntpath
 
 import pytest
 
-from finlexpurple.scope.enforcement import OutOfScopeError, enforce_scope
+from finlexpurple.scope.enforcement import (
+    OutOfScopeError,
+    _filesystem_path_contains,
+    enforce_scope,
+)
 from finlexpurple.scope.models import ScopeDefinition, Target
 
 
@@ -92,3 +97,19 @@ def test_local_path_deny_rule_takes_precedence(tmp_path) -> None:
 
     with pytest.raises(OutOfScopeError):
         enforce_scope(scope, private / "key.txt")
+
+
+def test_windows_path_comparison_is_case_insensitive_and_still_blocks_outside() -> None:
+    root = r"C:\Users\Engineer\Project"
+    same_path_different_case = r"c:\users\engineer\project"
+    descendant_different_case = r"c:\USERS\ENGINEER\PROJECT\src"
+    outside = r"C:\Users\Engineer\Project-copy"
+    windows_path_functions = {
+        "normcase": ntpath.normcase,
+        "abspath": ntpath.abspath,
+        "commonpath": ntpath.commonpath,
+    }
+
+    assert _filesystem_path_contains(root, same_path_different_case, **windows_path_functions)
+    assert _filesystem_path_contains(root, descendant_different_case, **windows_path_functions)
+    assert not _filesystem_path_contains(root, outside, **windows_path_functions)
