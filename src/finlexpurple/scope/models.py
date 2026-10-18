@@ -99,7 +99,7 @@ class Target(BaseModel):
         if not local_path.is_dir():
             raise InvalidTargetError("Target must be an existing local directory.")
         canonical = os.path.normcase(str(local_path))
-        return cls(kind="directory", canonical=canonical, local_path=Path(canonical))
+        return cls(kind="directory", canonical=canonical, local_path=local_path)
 
     @classmethod
     def _parse_url(cls, raw: str) -> Target:
@@ -166,7 +166,7 @@ class ScopeDefinition(BaseModel):
         return cls(
             target=target,
             first_confirmed_at=first_confirmed_at,
-            allow_paths=(str(target.local_path),),
+            allow_paths=(os.path.normcase(str(target.local_path)),),
         )
 
     def confirmed(self, timestamp: datetime | None = None) -> ScopeDefinition:

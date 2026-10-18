@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 import pytest
@@ -54,6 +55,7 @@ def test_directory_target_resolves_symlinks_and_requires_existing_directory(tmp_
 
     assert target.kind == "directory"
     assert target.local_path == root.resolve()
+    assert target.canonical == os.path.normcase(str(root.resolve()))
     with pytest.raises(InvalidTargetError, match="existing local directory"):
         Target.parse(tmp_path / "missing")
     with pytest.raises(InvalidTargetError, match="existing local directory"):
