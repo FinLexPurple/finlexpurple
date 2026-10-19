@@ -26,7 +26,7 @@ _httpx_logger = logging.getLogger("httpx")
 _httpx_logger.setLevel(max(_httpx_logger.level, logging.WARNING))
 if not any(isinstance(item, RedactionFilter) for item in _httpx_logger.filters):
     _httpx_logger.addFilter(RedactionFilter())
-USER_AGENT = "FinLexPurple/0.0.1 (authorized security reconnaissance)"
+USER_AGENT = "FinLexPurple/0.1.0a1 (authorized security reconnaissance)"
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
 
