@@ -1,0 +1,5 @@
+# SYNTHETIC fixture; system_profiler is only available on macOS.
+Graphics/Displays:
+    Apple M3:
+      Chipset Model: Apple M3
+      Memory: 24 GB
