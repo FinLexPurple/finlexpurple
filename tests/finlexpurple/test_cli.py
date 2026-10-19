@@ -51,7 +51,10 @@ def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
 
 def test_setup_runs_phase_two_wizard(monkeypatch) -> None:
     called: list[bool] = []
-    monkeypatch.setattr("finlexpurple.cli.run_setup", lambda: called.append(True) or True)
+    monkeypatch.setattr(
+        "finlexpurple.cli.run_setup",
+        lambda fake_hardware_profile=None: called.append(True) or True,
+    )
 
     result = runner.invoke(app, ["setup"])
 
@@ -59,10 +62,53 @@ def test_setup_runs_phase_two_wizard(monkeypatch) -> None:
     assert called == [True]
 
 
+def test_doctor_prints_facts_without_full_paths_or_secrets(monkeypatch, tmp_path) -> None:
+    from finlexpurple.hardware.detect import HardwareFacts
+
+    facts = HardwareFacts(
+        total_ram_gb=16,
+        model_directory=tmp_path / "private-home" / ".ollama" / "models",
+        disk_checked_path=tmp_path / "private-home",
+        free_disk_gb=12,
+        gpu_kind="none",
+        gpu_name=None,
+        gpu_memory_gb=None,
+        operating_system="Synthetic OS",
+    )
+    monkeypatch.setattr(cli, "detect_hardware", lambda: facts)
+
+    result = runner.invoke(app, ["doctor"])
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 0
+    assert "Total system RAM: 16.0 GB" in output
+    assert "Free disk space: 12.0 GB" in output
+    assert "private-home" not in output
+    assert "API_KEY" not in output
+
+
+def test_doctor_fake_hardware_profile_is_explicit_and_sanitized() -> None:
+    result = runner.invoke(app, ["doctor", "--fake-hardware-profile", "apple-24gb"])
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 0
+    assert "Hardware source: synthetic profile apple-24gb" in output
+    assert "GPU: apple_silicon" in output
+    assert "Total system RAM: 24.0 GB" in output
+    assert "<synthetic" not in output
+
+
+def test_setup_rejects_unknown_fake_hardware_profile() -> None:
+    result = runner.invoke(app, ["setup", "--fake-hardware-profile", "made-up"])
+
+    assert result.exit_code == 2
+    assert "Unknown hardware profile" in strip_ansi(result.output)
+
+
 def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     seen: list[bool] = []
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
-    monkeypatch.setattr("finlexpurple.cli.run_setup", lambda: True)
+    monkeypatch.setattr("finlexpurple.cli.run_setup", lambda fake_hardware_profile=None: True)
     monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target: object())
 
     commands = (

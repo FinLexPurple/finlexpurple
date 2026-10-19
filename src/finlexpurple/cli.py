@@ -9,6 +9,9 @@ from typing import Annotated
 import typer
 
 from finlexpurple import __version__
+from finlexpurple.hardware.detect import detect_hardware
+from finlexpurple.hardware.doctor import format_facts
+from finlexpurple.hardware.profiles import hardware_profile, profile_names
 from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
@@ -45,11 +48,46 @@ def _stub(command: str, phase: int) -> None:
 
 
 @app.command()
-def setup() -> None:
+def setup(
+    fake_hardware_profile: Annotated[
+        str | None,
+        typer.Option(
+            "--fake-hardware-profile",
+            help="Use synthetic hardware facts for a manual setup what-if run.",
+        ),
+    ] = None,
+) -> None:
     """Configure hardware tier and model provider."""
 
-    if not run_setup():
+    if fake_hardware_profile is not None and fake_hardware_profile not in profile_names():
+        typer.echo(f"Unknown hardware profile. Choose one of: {', '.join(profile_names())}", err=True)
+        raise typer.Exit(code=2)
+    if not run_setup(fake_hardware_profile=fake_hardware_profile):
         raise typer.Exit(code=1)
+
+
+@app.command()
+def doctor(
+    fake_hardware_profile: Annotated[
+        str | None,
+        typer.Option(
+            "--fake-hardware-profile",
+            help="Display a synthetic profile for a manual what-if run.",
+        ),
+    ] = None,
+) -> None:
+    """Print hardware facts without API keys or full filesystem paths."""
+
+    if fake_hardware_profile is None:
+        facts = detect_hardware()
+    else:
+        try:
+            facts = hardware_profile(fake_hardware_profile)
+        except ValueError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from None
+        typer.echo(f"Hardware source: synthetic profile {fake_hardware_profile}")
+    typer.echo(format_facts(facts))
 
 
 @app.command()
