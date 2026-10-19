@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
@@ -9,11 +10,22 @@ from typing import Annotated
 import typer
 
 from finlexpurple import __version__
+from finlexpurple.config import Config, ConfigurationError
 from finlexpurple.hardware.detect import detect_hardware
 from finlexpurple.hardware.doctor import format_facts
 from finlexpurple.hardware.profiles import hardware_profile, profile_names
 from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
+from finlexpurple.orchestrator.engine import run as run_orchestration
+from finlexpurple.orchestrator.engine import run_id_for_resume, state_from_recon
+from finlexpurple.orchestrator.iteration_limits import (
+    IterationLimitConfigurationError,
+    IterationLimits,
+)
+from finlexpurple.orchestrator.persistence import load_state
+from finlexpurple.orchestrator.planner import Planner
+from finlexpurple.orchestrator.state import InvalidRunStateError
+from finlexpurple.providers.factory import create_provider
 from finlexpurple.recon.crawler import ReconError, run_recon
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
 from finlexpurple.scope.enforcement import OutOfScopeError
@@ -117,9 +129,13 @@ def init() -> None:
 @app.command()
 def scan(
     target: Annotated[
-        str,
+        str | None,
         typer.Option("--target", help="URL, IP/CIDR, or existing local directory to scope."),
-    ],
+    ] = None,
+    resume: Annotated[
+        Path | None,
+        typer.Option("--resume", help="Resume from a saved run-state.json file."),
+    ] = None,
     root_url: Annotated[
         str | None,
         typer.Option("--root-url", help="Starting HTTP(S) URL for an IP/CIDR scope."),
@@ -133,20 +149,58 @@ def scan(
         typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests (default 0.5)."),
     ] = 0.5,
 ) -> None:
-    """Confirm a target and map its in-scope web endpoints."""
+    """Confirm scope, map endpoints, and run the bounded orchestration loop.
 
-    try:
-        normalized_target = Target.parse(target)
-    except InvalidTargetError as exc:
-        typer.echo(f"Invalid target: {exc}", err=True)
-        raise typer.Exit(code=2) from None
+    Two entry paths: a fresh scan from ``--target`` (confirm scope -> recon ->
+    build initial state) or ``--resume`` of a saved ``run-state.json``. In both
+    cases scope is confirmed and the Phase 6 engine is driven under
+    ``IterationLimits``; the engine persists after every stage so an interrupted
+    run is resumable. Exits non-zero on bad arguments, unconfirmed scope, unsafe
+    recon, or an unsafe/mismatched resume, printing a specific message rather
+    than a traceback.
+    """
+
+    if resume is not None and target is not None:
+        typer.echo("--target cannot be combined with --resume; the saved target is used.", err=True)
+        raise typer.Exit(code=2)
+    if resume is None and target is None:
+        typer.echo("--target is required unless --resume is supplied.", err=True)
+        raise typer.Exit(code=2)
+    state = None
+    state_path: Path
+    if resume is not None:
+        try:
+            # Resume is only as trustworthy as the file it reads, so the saved
+            # state is fully re-validated: run_id must match the target hash and
+            # be traversal-free, the file must actually live at
+            # <run_id>/run-state.json, and the saved target must already be in
+            # canonical form (an un-normalized target signals tampering).
+            state = load_state(resume)
+            run_id = run_id_for_resume(state)
+            if resume.name != "run-state.json" or resume.parent.name != run_id:
+                raise InvalidRunStateError("Cannot resume: state file path does not match its run_id.")
+            normalized_target = Target.parse(state.canonical_target)
+            if normalized_target.canonical != state.canonical_target:
+                raise InvalidRunStateError("Cannot resume: saved canonical target is not normalized.")
+            state_path = resume
+        except (InvalidRunStateError, ValueError, OSError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from None
+    else:
+        assert target is not None
+        try:
+            normalized_target = Target.parse(target)
+        except InvalidTargetError as exc:
+            typer.echo(f"Invalid target: {exc}", err=True)
+            raise typer.Exit(code=2) from None
+
     if normalized_target.kind == "directory":
         typer.echo("Web recon requires a URL or IP/CIDR scope; local directory recon is not implemented.", err=True)
         raise typer.Exit(code=2)
-    if normalized_target.kind == "network" and root_url is None:
+    if state is None and normalized_target.kind == "network" and root_url is None:
         typer.echo("IP/CIDR recon requires --root-url with an in-scope HTTP(S) hostname or address.", err=True)
         raise typer.Exit(code=2)
-    if normalized_target.kind == "url" and root_url is not None:
+    if state is None and normalized_target.kind == "url" and root_url is not None:
         typer.echo("--root-url is only valid with an IP/CIDR --target.", err=True)
         raise typer.Exit(code=2)
     try:
@@ -157,30 +211,61 @@ def scan(
     if confirmed_scope is None:
         typer.echo("Scope was not confirmed; no scan was started.", err=True)
         raise typer.Exit(code=1)
-    start_url = root_url or normalized_target.canonical
+    if state is None:
+        start_url = root_url or normalized_target.canonical
+        try:
+            result = run_recon(
+                confirmed_scope,
+                start_url,
+                request_delay=request_delay,
+                respect_robots=respect_robots,
+            )
+        except (ReconError, OutOfScopeError) as exc:
+            typer.echo(f"Recon could not start safely: {exc}", err=True)
+            raise typer.Exit(code=1) from None
+        state, state_path = state_from_recon(normalized_target.canonical, result)
+        typer.echo(f"Recon: discovered {len(result.catalog)} endpoints.")
+        for endpoint in result.catalog.endpoints:
+            typer.echo(f"  {endpoint.method} {endpoint.url}")
+            if endpoint.parameters:
+                typer.echo(f"    Parameters: {', '.join(endpoint.parameters)}")
+            if endpoint.content_type:
+                typer.echo(f"    Content-Type: {endpoint.content_type}")
+        if result.disallow_paths:
+            typer.echo(f"Recon: recorded {len(result.disallow_paths)} robots.txt Disallow path hints.")
+            for path in result.disallow_paths:
+                typer.echo(f"  robots.txt Disallow: {path}")
+        for warning in result.warnings:
+            typer.echo(f"Recon warning: {warning}")
+    elif state.canonical_target != normalized_target.canonical:
+        typer.echo("Cannot resume: confirmed target does not match the saved canonical target.", err=True)
+        raise typer.Exit(code=2)
+
+    # A provider is optional: it only lets the planner reorder actions. If none
+    # is configured, or configuration/construction fails, the scan proceeds with
+    # the deterministic ordering rather than aborting.
+    provider = None
+    if os.environ.get("LLM_PROVIDER"):
+        try:
+            config = Config.load()
+            provider = create_provider(config)
+        except (ConfigurationError, ValueError, OSError):
+            provider = None
+    limits: IterationLimits
     try:
-        result = run_recon(
-            confirmed_scope,
-            start_url,
-            request_delay=request_delay,
-            respect_robots=respect_robots,
-        )
-    except (ReconError, OutOfScopeError) as exc:
-        typer.echo(f"Recon could not start safely: {exc}", err=True)
+        limits = IterationLimits.from_environment()
+        final_state = run_orchestration(state, state_path, planner=Planner(provider), limits=limits)
+    except (IterationLimitConfigurationError, OSError, ValueError) as exc:
+        typer.echo(f"Orchestration could not continue safely: {exc}", err=True)
         raise typer.Exit(code=1) from None
-    typer.echo(f"Recon: discovered {len(result.catalog)} endpoints.")
-    for endpoint in result.catalog.endpoints:
-        typer.echo(f"  {endpoint.method} {endpoint.url}")
-        if endpoint.parameters:
-            typer.echo(f"    Parameters: {', '.join(endpoint.parameters)}")
-        if endpoint.content_type:
-            typer.echo(f"    Content-Type: {endpoint.content_type}")
-    if result.disallow_paths:
-        typer.echo(f"Recon: recorded {len(result.disallow_paths)} robots.txt Disallow path hints.")
-        for path in result.disallow_paths:
-            typer.echo(f"  robots.txt Disallow: {path}")
-    for warning in result.warnings:
-        typer.echo(f"Recon warning: {warning}")
+    if final_state.stop_reason:
+        typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
+        typer.echo(f"Resume with: finlexpurple scan --resume {state_path}")
+    else:
+        typer.echo(
+            f"Orchestration complete: {final_state.counters['iterations']} iterations, "
+            f"{final_state.counters['tool_calls']} detector calls. Phase 6 stub returned no findings."
+        )
 
 
 @telemetry_app.command()

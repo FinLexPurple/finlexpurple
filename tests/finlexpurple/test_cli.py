@@ -43,7 +43,7 @@ def test_version_prints_current_version() -> None:
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert strip_ansi(result.stdout).strip() == "0.0.1"
+    assert strip_ansi(result.stdout).strip() == "0.1.0a1"
 
 
 def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
@@ -142,6 +142,62 @@ def test_scan_requires_target_option() -> None:
 
     assert result.exit_code == 2
     assert "--target" in strip_ansi(result.output)
+
+
+def test_scan_resume_revalidates_saved_target_scope_and_skips_recon(tmp_path, monkeypatch) -> None:
+    """`scan --resume` re-confirms scope, does not rerun recon, and drives the engine.
+
+    Asserts recon is never invoked on resume (the monkeypatched run_recon raises if
+    called) and that a report-stage run completes, demonstrating resume continues
+    from saved state rather than restarting.
+    """
+
+    from datetime import datetime, timezone
+
+    from finlexpurple.orchestrator.persistence import create_run_directory, save_state
+    from finlexpurple.orchestrator.state import RunState
+
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
+    )
+    run_id, directory = create_run_directory(
+        "https://example.com/", reports_dir=tmp_path / "reports",
+        now=datetime(2026, 10, 19, tzinfo=timezone.utc),
+    )
+    state = RunState(
+        run_id=run_id,
+        canonical_target="https://example.com/",
+        current_stage="report",
+    )
+    state_path = directory / "run-state.json"
+    save_state(state_path, state)
+    monkeypatch.setattr(
+        "finlexpurple.cli.run_recon",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("recon must not rerun")),
+    )
+
+    result = runner.invoke(app, ["scan", "--resume", str(state_path)], input="y\n")
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "Resolved target: https://example.com/" in output
+    assert "Scope confirmation saved locally" in output
+    assert "Orchestration complete" in output
+    assert state_path.exists()
+
+
+def test_scan_resume_refuses_malformed_file_without_deleting_or_restarting(tmp_path) -> None:
+    """A malformed resume file exits 2 with a clear message and is left on disk intact."""
+
+    state_path = tmp_path / "run-state.json"
+    state_path.write_text("not json", encoding="utf-8")
+
+    result = runner.invoke(app, ["scan", "--resume", str(state_path)])
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 2
+    assert "Cannot resume" in output
+    assert state_path.read_text(encoding="utf-8") == "not json"
 
 
 def test_scan_confirms_scope_then_runs_recon_stage(tmp_path, monkeypatch) -> None:
