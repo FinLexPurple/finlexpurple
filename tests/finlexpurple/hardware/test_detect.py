@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from typer.testing import CliRunner
 
-from finlexpurple.hardware import detect
+from finlexpurple.cli import app
+from finlexpurple.hardware import detect, wizard
 
 
 def test_detects_nvidia_and_nearest_existing_model_parent(monkeypatch, tmp_path: Path) -> None:
@@ -18,7 +21,9 @@ def test_detects_nvidia_and_nearest_existing_model_parent(monkeypatch, tmp_path:
     monkeypatch.setattr(detect.platform, "system", lambda: "Linux")
     monkeypatch.setattr(detect.platform, "platform", lambda: "Linux synthetic")
     monkeypatch.setattr(detect, "_total_memory_bytes", lambda _: 16 * detect._GIB)
-    monkeypatch.setattr(detect, "_nvidia_gpu", lambda: ("Synthetic GPU", 12.0))
+    monkeypatch.setattr(
+        detect, "_probe_nvidia_gpu", lambda: (("Synthetic GPU", 12.0), None)
+    )
     monkeypatch.setattr(
         detect.shutil,
         "disk_usage",
@@ -60,7 +65,7 @@ def test_detects_apple_silicon_unified_memory(
         "_apple_silicon_unified_memory",
         lambda: memory_gb * detect._GIB,
     )
-    monkeypatch.setattr(detect, "_nvidia_gpu", lambda: None)
+    monkeypatch.setattr(detect, "_probe_nvidia_gpu", lambda: (None, None))
     monkeypatch.setattr(
         detect.shutil,
         "disk_usage",
@@ -100,7 +105,7 @@ def test_no_gpu_is_reported_when_nvidia_is_unavailable(monkeypatch, tmp_path: Pa
     monkeypatch.setattr(detect.platform, "system", lambda: "Linux")
     monkeypatch.setattr(detect.platform, "platform", lambda: "Linux synthetic")
     monkeypatch.setattr(detect, "_total_memory_bytes", lambda _: 8 * detect._GIB)
-    monkeypatch.setattr(detect, "_nvidia_gpu", lambda: None)
+    monkeypatch.setattr(detect, "_probe_nvidia_gpu", lambda: (None, None))
     monkeypatch.setattr(
         detect.shutil,
         "disk_usage",
@@ -112,3 +117,55 @@ def test_no_gpu_is_reported_when_nvidia_is_unavailable(monkeypatch, tmp_path: Pa
     assert facts.gpu_kind == "none"
     assert facts.gpu_name is None
     assert facts.gpu_memory_gb is None
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_message"),
+    [
+        ("missing", "nvidia-smi is unavailable"),
+        ("nonzero", "nvidia-smi returned an error"),
+        ("timeout", "nvidia-smi timed out"),
+        ("empty", "no usable GPU facts"),
+        ("garbage", "no usable GPU facts"),
+    ],
+)
+def test_gpu_probe_failures_fall_back_to_cloud_without_crashing(
+    monkeypatch, tmp_path: Path, failure: str, expected_message: str
+) -> None:
+    model_dir = tmp_path / "models"
+    model_dir.mkdir()
+    monkeypatch.setenv("OLLAMA_MODELS", str(model_dir))
+    monkeypatch.setattr(detect.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(detect.platform, "platform", lambda: "Linux synthetic")
+    if failure == "missing":
+        def run(*args, **kwargs):
+            raise FileNotFoundError("nvidia-smi")
+    elif failure == "timeout":
+        def run(*args, **kwargs):
+            raise subprocess.TimeoutExpired(args[0], timeout=3)
+    elif failure == "nonzero":
+        def run(*args, **kwargs):
+            return SimpleNamespace(returncode=1, stdout="", stderr="failed")
+    else:
+        output = "" if failure == "empty" else "not valid GPU output"
+        def run(*args, **kwargs):
+            return SimpleNamespace(returncode=0, stdout=output, stderr="")
+    monkeypatch.setattr(detect.subprocess, "run", run)
+    monkeypatch.setattr(
+        detect.shutil,
+        "disk_usage",
+        lambda path: SimpleNamespace(free=30 * detect._GIB),
+    )
+
+    facts = detect.detect_hardware()
+
+    assert facts.gpu_kind == "none"
+    assert any(expected_message in warning for warning in facts.warnings)
+    monkeypatch.setattr(wizard, "detect_hardware", lambda: facts)
+    monkeypatch.chdir(tmp_path)
+    result = CliRunner().invoke(app, ["setup"], input="1\n1\n")
+
+    assert result.exit_code == 0, result.output
+    assert "Recommended tier: cloud." in result.output
+    assert "Hardware detection warning:" in result.output
+    assert "Saved MODEL_TIER=cloud" in result.output

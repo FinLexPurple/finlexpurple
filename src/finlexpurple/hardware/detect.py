@@ -11,8 +11,9 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from finlexpurple.hardware.parsers import parse_nvidia_smi
+
 _GIB = 1024**3
-_MIB = 1024**2
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class HardwareFacts:
     gpu_name: str | None
     gpu_memory_gb: float | None
     operating_system: str
+    warnings: tuple[str, ...] = ()
 
 
 def _windows_total_memory() -> int:
@@ -123,7 +125,7 @@ def _existing_disk_path(model_directory: Path) -> Path:
     return candidate
 
 
-def _nvidia_gpu() -> tuple[str, float] | None:
+def _probe_nvidia_gpu() -> tuple[tuple[str, float] | None, str | None]:
     try:
         result = subprocess.run(
             [
@@ -136,28 +138,29 @@ def _nvidia_gpu() -> tuple[str, float] | None:
             text=True,
             timeout=3,
         )
+    except FileNotFoundError:
+        return None, "nvidia-smi is unavailable; no NVIDIA GPU could be verified."
+    except subprocess.TimeoutExpired:
+        return None, "nvidia-smi timed out; no NVIDIA GPU could be verified."
     except (OSError, subprocess.SubprocessError):
-        return None
+        return None, "nvidia-smi failed; no NVIDIA GPU could be verified."
     if result.returncode != 0:
-        return None
-
-    detected: list[tuple[str, float]] = []
-    for line in result.stdout.splitlines():
-        parts = [part.strip() for part in line.split(",", maxsplit=1)]
-        if len(parts) != 2:
-            continue
-        try:
-            detected.append((parts[0], float(parts[1]) * _MIB / _GIB))
-        except ValueError:
-            continue
-    return max(detected, key=lambda item: item[1], default=None)
-
+        return None, "nvidia-smi returned an error; no NVIDIA GPU could be verified."
+    parsed = parse_nvidia_smi(result.stdout)
+    if parsed is None:
+        return None, "nvidia-smi returned no usable GPU facts; cloud is the safe recommendation."
+    return parsed, None
 
 def detect_hardware() -> HardwareFacts:
     """Detect system RAM, GPU memory, OS, and free space for Ollama models."""
 
     system = platform.system()
-    total_memory = _total_memory_bytes(system)
+    warnings: list[str] = []
+    try:
+        total_memory = _total_memory_bytes(system)
+    except (AttributeError, OSError, subprocess.SubprocessError):
+        total_memory = 0
+        warnings.append("System memory detection failed; cloud is the safe recommendation.")
     is_apple_silicon = system == "Darwin" and platform.machine().lower() in {
         "arm64",
         "aarch64",
@@ -166,7 +169,9 @@ def detect_hardware() -> HardwareFacts:
     gpu_kind = "none"
     gpu_name = None
     gpu_memory = None
-    nvidia = _nvidia_gpu()
+    nvidia, nvidia_warning = _probe_nvidia_gpu()
+    if nvidia_warning and system != "Darwin":
+        warnings.append(nvidia_warning)
     if nvidia is not None:
         gpu_kind = "nvidia"
         gpu_name, gpu_memory = nvidia
@@ -181,8 +186,13 @@ def detect_hardware() -> HardwareFacts:
         gpu_memory = total_memory / _GIB
 
     model_directory = _model_directory()
-    disk_checked_path = _existing_disk_path(model_directory)
-    free_disk = shutil.disk_usage(disk_checked_path).free / _GIB
+    try:
+        disk_checked_path = _existing_disk_path(model_directory)
+        free_disk = shutil.disk_usage(disk_checked_path).free / _GIB
+    except OSError:
+        disk_checked_path = Path.cwd()
+        free_disk = 0
+        warnings.append("Disk space detection failed; cloud is the safe recommendation.")
     return HardwareFacts(
         total_ram_gb=total_memory / _GIB,
         model_directory=model_directory,
@@ -192,4 +202,5 @@ def detect_hardware() -> HardwareFacts:
         gpu_name=gpu_name,
         gpu_memory_gb=gpu_memory,
         operating_system=_operating_system_label(),
+        warnings=tuple(warnings),
     )
