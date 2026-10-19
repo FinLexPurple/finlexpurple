@@ -1,0 +1,32 @@
+name: Optional live provider smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Cloud provider to call once
+        required: true
+        type: choice
+        options: [anthropic, openai, openrouter, gemini]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install package
+        run: python -m pip install .
+      - name: Call selected provider if its secret is configured
+        env:
+          INPUT_PROVIDER: ${{ inputs.provider }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python scripts/provider_smoke.py
