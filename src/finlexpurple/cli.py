@@ -14,7 +14,9 @@ from finlexpurple.hardware.doctor import format_facts
 from finlexpurple.hardware.profiles import hardware_profile, profile_names
 from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
+from finlexpurple.recon.crawler import ReconError, run_recon
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
+from finlexpurple.scope.enforcement import OutOfScopeError
 from finlexpurple.scope.models import InvalidTargetError, Target
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
@@ -118,22 +120,67 @@ def scan(
         str,
         typer.Option("--target", help="URL, IP/CIDR, or existing local directory to scope."),
     ],
+    root_url: Annotated[
+        str | None,
+        typer.Option("--root-url", help="Starting HTTP(S) URL for an IP/CIDR scope."),
+    ] = None,
+    respect_robots: Annotated[
+        bool,
+        typer.Option("--respect-robots/--ignore-robots", help="Skip paths disallowed by robots.txt."),
+    ] = False,
+    request_delay: Annotated[
+        float,
+        typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests (default 0.5)."),
+    ] = 0.5,
 ) -> None:
-    """Confirm a target's scope (scanning is added in later phases)."""
+    """Confirm a target and map its in-scope web endpoints."""
 
     try:
         normalized_target = Target.parse(target)
-        confirmed_scope = confirm_scope(normalized_target)
     except InvalidTargetError as exc:
         typer.echo(f"Invalid target: {exc}", err=True)
         raise typer.Exit(code=2) from None
+    if normalized_target.kind == "directory":
+        typer.echo("Web recon requires a URL or IP/CIDR scope; local directory recon is not implemented.", err=True)
+        raise typer.Exit(code=2)
+    if normalized_target.kind == "network" and root_url is None:
+        typer.echo("IP/CIDR recon requires --root-url with an in-scope HTTP(S) hostname or address.", err=True)
+        raise typer.Exit(code=2)
+    if normalized_target.kind == "url" and root_url is not None:
+        typer.echo("--root-url is only valid with an IP/CIDR --target.", err=True)
+        raise typer.Exit(code=2)
+    try:
+        confirmed_scope = confirm_scope(normalized_target)
     except ScopeStorageError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None
     if confirmed_scope is None:
         typer.echo("Scope was not confirmed; no scan was started.", err=True)
         raise typer.Exit(code=1)
-    typer.echo("Scope confirmed. Scanning is not implemented yet.")
+    start_url = root_url or normalized_target.canonical
+    try:
+        result = run_recon(
+            confirmed_scope,
+            start_url,
+            request_delay=request_delay,
+            respect_robots=respect_robots,
+        )
+    except (ReconError, OutOfScopeError) as exc:
+        typer.echo(f"Recon could not start safely: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Recon: discovered {len(result.catalog)} endpoints.")
+    for endpoint in result.catalog.endpoints:
+        typer.echo(f"  {endpoint.method} {endpoint.url}")
+        if endpoint.parameters:
+            typer.echo(f"    Parameters: {', '.join(endpoint.parameters)}")
+        if endpoint.content_type:
+            typer.echo(f"    Content-Type: {endpoint.content_type}")
+    if result.disallow_paths:
+        typer.echo(f"Recon: recorded {len(result.disallow_paths)} robots.txt Disallow path hints.")
+        for path in result.disallow_paths:
+            typer.echo(f"  robots.txt Disallow: {path}")
+    for warning in result.warnings:
+        typer.echo(f"Recon warning: {warning}")
 
 
 @telemetry_app.command()

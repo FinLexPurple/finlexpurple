@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import re
+from types import SimpleNamespace
 
 from typer.testing import CliRunner
 
 from finlexpurple import cli
 from finlexpurple.cli import app
+from finlexpurple.recon.endpoint_catalog import EndpointCatalog
+from finlexpurple.recon.fingerprint import Fingerprint
 
 runner = CliRunner()
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -15,6 +18,15 @@ _ANSI_ESCAPE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 def strip_ansi(output: str) -> str:
     return _ANSI_ESCAPE.sub("", output)
+
+
+def stub_recon_result():
+    return SimpleNamespace(
+        catalog=EndpointCatalog(),
+        fingerprint=Fingerprint(server=None, technologies=()),
+        disallow_paths=(),
+        warnings=(),
+    )
 
 
 def test_help_lists_registered_subcommands() -> None:
@@ -110,6 +122,7 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
     monkeypatch.setattr("finlexpurple.cli.run_setup", lambda fake_hardware_profile=None: True)
     monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target: object())
+    monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
 
     commands = (
         ["setup"],
@@ -131,10 +144,11 @@ def test_scan_requires_target_option() -> None:
     assert "--target" in strip_ansi(result.output)
 
 
-def test_scan_confirms_scope_then_reports_stub_behavior(tmp_path, monkeypatch) -> None:
+def test_scan_confirms_scope_then_runs_recon_stage(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
     )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
     result = runner.invoke(app, ["scan", "--target", "https://example.com/app"], input="y\n")
 
     output = strip_ansi(result.output)
@@ -143,7 +157,7 @@ def test_scan_confirms_scope_then_reports_stub_behavior(tmp_path, monkeypatch) -
     assert "Subdomains intended for enumeration: none" in output
     assert "path /app and its descendants" in output
     assert "exact host example.com" in output
-    assert "Scope confirmed. Scanning is not implemented yet." in output
+    assert "Recon: discovered 0 endpoints." in output
     assert len(list((tmp_path / "user-config").glob("*.json"))) == 1
 
 
@@ -151,6 +165,7 @@ def test_scan_uses_cached_confirmation_without_prompting_again(tmp_path, monkeyp
     monkeypatch.setattr(
         "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
     )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
     first = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="y\n")
     second = runner.invoke(app, ["scan", "--target", "https://example.com:443/"])
 
@@ -172,18 +187,55 @@ def test_scan_decline_stops_before_starting_or_caching(tmp_path, monkeypatch) ->
     assert not (tmp_path / "user-config").exists()
 
 
-def test_scan_confirms_local_directory_target_through_same_flow(tmp_path, monkeypatch) -> None:
+def test_scan_rejects_local_directory_target_before_confirmation(tmp_path) -> None:
+    target_dir = tmp_path / "MiXeDProject"
+    target_dir.mkdir()
+    result = runner.invoke(app, ["scan", "--target", str(target_dir)])
+    output = strip_ansi(result.output)
+
+    assert result.exit_code == 2
+    assert "Web recon requires a URL or IP/CIDR scope" in output
+
+
+def test_scan_requires_root_url_for_ip_or_cidr_target() -> None:
+    result = runner.invoke(app, ["scan", "--target", "192.0.2.0/24"])
+
+    assert result.exit_code == 2
+    assert "requires --root-url" in strip_ansi(result.output)
+
+
+def test_scan_passes_network_root_and_recon_options(monkeypatch, tmp_path) -> None:
+    seen: dict[str, object] = {}
     monkeypatch.setattr(
         "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
     )
-    target_dir = tmp_path / "MiXeDProject"
-    target_dir.mkdir()
-    result = runner.invoke(app, ["scan", "--target", str(target_dir)], input="y\n")
-    output = strip_ansi(result.output)
 
-    assert result.exit_code == 0, output
-    assert f"Resolved target: {target_dir.resolve()}" in output
-    assert "Scope confirmed. Scanning is not implemented yet." in output
+    def fake_recon(scope, root_url, **kwargs):
+        seen.update(root_url=root_url, **kwargs)
+        return stub_recon_result()
+
+    monkeypatch.setattr("finlexpurple.cli.run_recon", fake_recon)
+    result = runner.invoke(
+        app,
+        [
+            "scan",
+            "--target",
+            "127.0.0.0/8",
+            "--root-url",
+            "http://127.0.0.1:8080/",
+            "--request-delay",
+            "0.25",
+            "--respect-robots",
+        ],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0, strip_ansi(result.output)
+    assert seen == {
+        "root_url": "http://127.0.0.1:8080/",
+        "request_delay": 0.25,
+        "respect_robots": True,
+    }
 
 
 def test_scan_rejects_invalid_target(tmp_path, monkeypatch) -> None:
