@@ -1,5 +1,10 @@
 # FinLexPurple
 
+Scan run state and reports are written under `finlexpurple-reports/`. This
+directory is gitignored and may contain local scan metadata; do not commit its
+contents. A run can be resumed with `finlexpurple scan --resume
+<path-to-run-state.json>` after confirming the same target scope.
+
 Autonomous security testing agent — placeholder release to reserve the package name.
 
 Full release coming soon.
