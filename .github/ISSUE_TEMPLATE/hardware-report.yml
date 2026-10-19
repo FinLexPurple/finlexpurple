@@ -1,0 +1,23 @@
+name: Hardware detection report
+description: Report an issue with hardware detection or model setup
+title: "Hardware report: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please review the output for private information before posting. `finlexpurple doctor` omits full filesystem paths and API keys, but still reports your operating system and hardware facts.
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: `finlexpurple doctor` output
+      description: Paste the complete output, including any error message.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps and expected behavior
+      description: Include the command you ran and what you expected.
+    validations:
+      required: true
