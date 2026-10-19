@@ -29,6 +29,7 @@ def facts(gpu_kind: str, memory: float | None, ram: float = 32) -> HardwareFacts
         (facts("nvidia", 24), ModelTier.LOCAL_30B),
         (facts("apple_silicon", 24), ModelTier.LOCAL_30B),
         (facts("nvidia", 23.9), ModelTier.LOCAL_8B_HYBRID),
+        (facts("amd", 16), ModelTier.LOCAL_8B_HYBRID),
         (facts("nvidia", 8), ModelTier.LOCAL_8B_HYBRID),
         (facts("nvidia", 7.9, ram=64), ModelTier.CLOUD),
         (facts("apple_silicon", 23.9), ModelTier.LOCAL_8B_HYBRID),

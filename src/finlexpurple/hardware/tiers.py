@@ -29,7 +29,7 @@ def recommend_tier(hardware: HardwareFacts) -> ModelTier:
     memory = hardware.gpu_memory_gb
     if hardware.gpu_kind != "none" and memory is not None and memory >= 24:
         return ModelTier.LOCAL_30B
-    if hardware.gpu_kind == "nvidia" and memory is not None and 8 <= memory < 24:
+    if hardware.gpu_kind in {"nvidia", "amd"} and memory is not None and 8 <= memory < 24:
         return ModelTier.LOCAL_8B_HYBRID
     if hardware.gpu_kind == "apple_silicon" and memory is not None and 16 <= memory < 24:
         return ModelTier.LOCAL_8B_HYBRID
@@ -42,7 +42,7 @@ def available_tiers(hardware: HardwareFacts) -> tuple[ModelTier, ...]:
     recommendation = recommend_tier(hardware)
     options: list[ModelTier] = [ModelTier.CLOUD]
     memory = hardware.gpu_memory_gb
-    if hardware.gpu_kind == "nvidia" and memory is not None:
+    if hardware.gpu_kind in {"nvidia", "amd"} and memory is not None:
         if memory >= 8:
             options.append(ModelTier.LOCAL_8B_HYBRID)
         if memory >= 24:
