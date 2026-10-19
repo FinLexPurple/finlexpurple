@@ -1,1 +1,1 @@
-"""Reconnaissance modules are added in Phase 5."""
+"""Scope-enforced web reconnaissance and attack-surface cataloging."""
