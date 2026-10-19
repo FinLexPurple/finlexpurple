@@ -9,6 +9,7 @@ from dotenv import dotenv_values, set_key
 
 from finlexpurple.config import LLMProvider
 from finlexpurple.hardware.detect import HardwareFacts, detect_hardware
+from finlexpurple.hardware.profiles import hardware_profile
 from finlexpurple.hardware.tiers import (
     APPROXIMATE_MODEL_SIZES_GB,
     ModelTier,
@@ -116,6 +117,8 @@ def _persist_selections(
 
 
 def _show_hardware(hardware: HardwareFacts) -> None:
+    for warning in hardware.warnings:
+        typer.echo(f"Hardware detection warning: {warning}")
     typer.echo(f"Operating system: {hardware.operating_system}")
     typer.echo(f"Total system RAM: {hardware.total_ram_gb:.1f} GB")
     if hardware.gpu_kind == "none":
@@ -133,10 +136,17 @@ def _show_hardware(hardware: HardwareFacts) -> None:
 def run_setup(
     env_path: Path | None = None,
     hardware: HardwareFacts | None = None,
+    fake_hardware_profile: str | None = None,
 ) -> bool:
     """Run setup interactively and return whether its choices were persisted."""
 
-    facts = hardware or detect_hardware()
+    if hardware is not None and fake_hardware_profile is not None:
+        raise ValueError("Pass either hardware facts or a fake profile, not both.")
+    facts = hardware or (
+        hardware_profile(fake_hardware_profile)
+        if fake_hardware_profile is not None
+        else detect_hardware()
+    )
     _show_hardware(facts)
     recommendation = recommend_tier(facts)
     typer.echo(f"Recommended tier: {recommendation.value}. {recommendation_reason(facts, recommendation)}")

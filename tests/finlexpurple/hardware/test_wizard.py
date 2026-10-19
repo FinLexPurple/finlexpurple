@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 import pytest
+from dotenv import dotenv_values
 from typer.testing import CliRunner
 
 from finlexpurple.cli import app
@@ -183,3 +184,36 @@ def test_existing_env_values_are_updated_only_after_approval(monkeypatch, tmp_pa
     saved = env_file.read_text(encoding="utf-8")
     assert "MODEL_TIER=cloud" in saved
     assert "LLM_PROVIDER=gemini" in saved
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_tier", "expected_provider"),
+    [
+        ("apple-8gb", "cloud", "anthropic"),
+        ("apple-16gb", "local-8b-hybrid", "ollama"),
+        ("apple-24gb", "local-30b", "ollama"),
+        ("apple-32gb", "local-30b", "ollama"),
+        ("nvidia-8gb", "local-8b-hybrid", "ollama"),
+        ("nvidia-12gb", "local-8b-hybrid", "ollama"),
+        ("nvidia-24gb", "local-30b", "ollama"),
+        ("amd-16gb", "local-8b-hybrid", "ollama"),
+        ("no-gpu", "cloud", "anthropic"),
+        ("low-ram", "cloud", "anthropic"),
+        ("low-disk", "cloud", "anthropic"),
+        ("no-gpu-8gb-ram", "cloud", "anthropic"),
+    ],
+)
+def test_synthetic_profiles_complete_setup_flow(
+    monkeypatch, tmp_path: Path, profile: str, expected_tier: str, expected_provider: str
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    inputs = "1\n1\nn\n" if expected_tier == "local-8b-hybrid" else "1\n1\n"
+    result = runner.invoke(app, ["setup", "--fake-hardware-profile", profile], input=inputs)
+    output = strip_ansi(result.output)
+    saved = dotenv_values(tmp_path / ".env") if (tmp_path / ".env").exists() else {}
+
+    assert result.exit_code == 0, output
+    assert f"Recommended tier: {expected_tier}." in output
+    assert f"Saved MODEL_TIER={expected_tier} and LLM_PROVIDER={expected_provider}" in output
+    assert saved["MODEL_TIER"] == expected_tier
+    assert saved["LLM_PROVIDER"] == expected_provider
