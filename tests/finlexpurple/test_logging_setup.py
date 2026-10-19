@@ -55,6 +55,29 @@ def test_redacts_secret_fields_and_assignments(
         ]
 
 
+@pytest.mark.parametrize("formatter", [HumanFormatter("%(levelname)s %(message)s"), JsonFormatter()])
+def test_redacts_all_http_query_values_in_messages_and_arguments(
+    formatter: logging.Formatter,
+) -> None:
+    output = io.StringIO()
+    handler = logging.StreamHandler(output)
+    handler.addFilter(RedactionFilter())
+    handler.setFormatter(formatter)
+    logger = logging.getLogger(f"test-query-redaction-{type(formatter).__name__}")
+    logger.setLevel(logging.INFO)
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.addHandler(handler)
+
+    logger.info("Request URL: %s", "https://example.test/search?q=private&access_token=token-value")
+
+    rendered = output.getvalue()
+    assert "private" not in rendered
+    assert "token-value" not in rendered
+    assert "q=[REDACTED]" in rendered
+    assert "access_token=[REDACTED]" in rendered
+
+
 class FakeAuthenticationError(openai.APIError):
     status_code = 401
 

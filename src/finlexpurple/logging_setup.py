@@ -8,11 +8,13 @@ import os
 import re
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import parse_qsl, urlsplit, urlunsplit
 
 _SECRET_FIELD = re.compile(r"(?:KEY|TOKEN|SECRET)", re.IGNORECASE)
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET)[A-Z0-9_]*)\s*([=:])\s*([^\s,;]+)"
 )
+_URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+", re.IGNORECASE)
 _STANDARD_FIELDS = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime"}
 
 
@@ -28,6 +30,7 @@ def _redact_value(value: Any) -> Any:
         return [_redact_value(item) for item in value]
     if isinstance(value, str):
         redacted = _SECRET_ASSIGNMENT.sub(r"\1\2[REDACTED]", value)
+        redacted = _URL_PATTERN.sub(_redact_url_query, redacted)
         secrets = {
             secret
             for name, secret in os.environ.items()
@@ -37,6 +40,22 @@ def _redact_value(value: Any) -> Any:
             redacted = redacted.replace(secret, "[REDACTED]")
         return redacted
     return value
+
+
+def _redact_url_query(match: re.Match[str]) -> str:
+    """Remove every value from HTTP(S) query strings found in log text."""
+
+    raw_url = match.group(0)
+    try:
+        parts = urlsplit(raw_url)
+        if not parts.query:
+            return raw_url
+        safe_query = "&".join(
+            f"{key}=[REDACTED]" for key, _ in parse_qsl(parts.query, keep_blank_values=True)
+        )
+        return urlunsplit((parts.scheme, parts.netloc, parts.path, safe_query, ""))
+    except ValueError:
+        return "<redacted-url>"
 
 
 class RedactionFilter(logging.Filter):
