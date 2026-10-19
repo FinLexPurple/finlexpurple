@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from dotenv import dotenv_values, set_key
 
 from finlexpurple import __version__
 from finlexpurple.config import Config, ConfigurationError
@@ -30,6 +31,9 @@ from finlexpurple.recon.crawler import ReconError, run_recon
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
 from finlexpurple.scope.enforcement import OutOfScopeError
 from finlexpurple.scope.models import InvalidTargetError, Target
+from finlexpurple.security import isolation
+from finlexpurple.security.isolation import IsolationTier
+from finlexpurple.tools.installed_check import check_tools, format_tool_report
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
 telemetry_app = typer.Typer(help="Manage optional telemetry.", no_args_is_help=True)
@@ -89,9 +93,20 @@ def doctor(
             help="Display a synthetic profile for a manual what-if run.",
         ),
     ] = None,
+    tools: Annotated[
+        bool,
+        typer.Option(
+            "--tools",
+            help="Report external scanner tool availability instead of hardware facts.",
+        ),
+    ] = False,
 ) -> None:
-    """Print hardware facts without API keys or full filesystem paths."""
+    """Print hardware facts, or (with --tools) external scanner tool availability."""
 
+    if tools:
+        # Phase 7: the tool-availability doctor, distinct from the hardware doctor.
+        typer.echo(format_tool_report(check_tools()))
+        return
     if fake_hardware_profile is None:
         facts = detect_hardware()
     else:
@@ -294,6 +309,67 @@ def feedback() -> None:
     """Submit run feedback (implemented in Phase 14)."""
 
     _stub("feedback", 14)
+
+
+@app.command(name="setup-isolation")
+def setup_isolation() -> None:
+    """Choose the container-isolation tier and save it to .env (Phase 7).
+
+    A separate first-run step from `setup` (the hardware wizard), by design — it
+    does not touch the frozen Phase 2 wizard. The two may be merged into one
+    `setup` command later (decisions.md §18 item 12).
+    """
+
+    choices = [tier.value for tier in IsolationTier]
+    typer.echo("Container-isolation tiers (the scan runs inside this boundary):")
+    typer.echo("  standard  (default) hardened Docker container — recommended")
+    typer.echo("  none      runs on the host, no container boundary (less safe)")
+    typer.echo("  maximum   gVisor sandbox — arrives in Phase 20")
+    selected = (
+        typer.prompt("Choose an isolation tier", default=IsolationTier.STANDARD.value)
+        .strip()
+        .lower()
+    )
+    if selected not in choices:
+        typer.echo(f"Unknown tier {selected!r}; choose one of: {', '.join(choices)}", err=True)
+        raise typer.Exit(code=2)
+    tier = IsolationTier(selected)
+
+    if tier is IsolationTier.NONE:
+        typer.echo(
+            "Warning: the None tier runs the scan directly on your host with no "
+            "container boundary. Standard (Docker) is recommended."
+        )
+        if not typer.confirm("Run without container isolation?", default=False):
+            typer.echo("No change made.")
+            raise typer.Exit()
+    if tier is IsolationTier.MAXIMUM:
+        typer.echo("Note: the Maximum (gVisor) tier is built in Phase 20; Standard is used until then.")
+    if tier is IsolationTier.STANDARD and not isolation.docker_available():
+        typer.echo(
+            "Note: Docker was not detected. Install and start Docker, or the scan "
+            "will refuse to run under the Standard tier."
+        )
+
+    env_path = Path.cwd() / ".env"
+    existing = dotenv_values(env_path) if env_path.exists() else {}
+    old = existing.get(isolation.ISOLATION_ENV_VAR)
+    if (
+        old
+        and old.strip().lower() != tier.value
+        and not typer.confirm(
+            f".env already sets {isolation.ISOLATION_ENV_VAR}={old}. Replace it with {tier.value}?",
+            default=False,
+        )
+    ):
+        typer.echo(f"Existing {isolation.ISOLATION_ENV_VAR} preserved.")
+        raise typer.Exit()
+    try:
+        set_key(env_path, isolation.ISOLATION_ENV_VAR, tier.value, quote_mode="auto", encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Could not save {isolation.ISOLATION_ENV_VAR} to {env_path}: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Saved {isolation.ISOLATION_ENV_VAR}={tier.value} to {env_path}.")
 
 
 app.add_typer(telemetry_app, name="telemetry")

@@ -330,3 +330,45 @@ def test_init_existing_env_does_not_need_to_read_template(tmp_path, monkeypatch)
     assert result.exit_code == 0
     assert "leaving it unchanged" in strip_ansi(result.stdout)
     assert (tmp_path / ".env").read_text(encoding="utf-8") == "preserve-me\n"
+
+
+def test_doctor_tools_reports_external_scanners() -> None:
+    """Phase 7: `doctor --tools` reports wrapped-scanner availability (never execs docker)."""
+
+    result = runner.invoke(app, ["doctor", "--tools"])
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "External tools:" in output
+    assert "trivy" in output and "osv-scanner" in output and "mcp-scan" in output
+
+
+def test_setup_isolation_saves_standard_tier(tmp_path, monkeypatch) -> None:
+    """Phase 7: the new isolation-tier setup step writes ISOLATION_TIER to .env."""
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("finlexpurple.security.isolation.docker_available", lambda: True)
+    result = runner.invoke(app, ["setup-isolation"], input="standard\n")
+
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "Saved ISOLATION_TIER=standard" in output
+    assert "ISOLATION_TIER=standard" in (tmp_path / ".env").read_text(encoding="utf-8")
+
+
+def test_setup_isolation_none_requires_explicit_confirmation(tmp_path, monkeypatch) -> None:
+    """Choosing None warns and only proceeds on an explicit confirm."""
+
+    monkeypatch.chdir(tmp_path)
+    # Select 'none', then decline the "run without isolation?" prompt.
+    result = runner.invoke(app, ["setup-isolation"], input="none\nn\n")
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0
+    assert "No change made." in output
+    assert not (tmp_path / ".env").exists()
+
+
+def test_setup_isolation_rejects_unknown_tier(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["setup-isolation"], input="ultra\n")
+    assert result.exit_code == 2
+    assert "Unknown tier" in strip_ansi(result.output)
