@@ -26,7 +26,8 @@ a synthetic what-if report, pass a named profile, for example
 override can exercise setup with
 `finlexpurple setup --fake-hardware-profile apple-16gb`; it does not alter
 hardware detection for normal runs. An unknown profile is rejected with the
-available profile names.
+available profile names. The setup command still runs the regular persistence
+flow: it can create `.env`, and it asks before replacing existing selections.
 
 The four hardware output fixtures under `tests/fixtures/hardware/` are
 synthetic. This environment has no `nvidia-smi`, `rocm-smi`, or
