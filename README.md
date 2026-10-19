@@ -17,6 +17,11 @@ covered by automated tests using synthetic hardware and mocked clients.
 Phase 4 out-of-scope blocking is verified by unit tests only. There is no
 scanner yet to exercise that enforcement end to end.
 
+The Phase 5 crawler was manually verified on Linux/WSL against the local
+two-server demo site only. Windows and macOS rely on the automated CI matrix;
+the crawler has not been manually verified on those platforms. No real-world
+site was tested.
+
 ## Hardware diagnostics
 
 Run `finlexpurple doctor` to print hardware facts. The command omits full
