@@ -179,6 +179,24 @@ def test_limit_configuration_uses_positive_integer_environment(monkeypatch) -> N
         IterationLimits.from_environment()
 
 
+def test_kill_switch_halts_at_a_safe_point_and_persists(tmp_path: Path) -> None:
+    """Phase 8: a stop requested via the controller halts the loop cleanly and resumably."""
+
+    from finlexpurple.security.safe_failure import SafeFailureController
+
+    state, path = _state(tmp_path)
+    controller = SafeFailureController()
+    controller.request_stop()  # operator engaged the kill switch
+    result = run(state, path, controller=controller, limits=IterationLimits(20, 50, 1800))
+
+    assert result.stop_reason == "stopped by kill switch at a safe point"
+    assert result.current_stage == "recon"  # halted before advancing, at a safe boundary
+    # State was persisted and is resumable; a fresh run with no stop completes.
+    assert load_state(path).stop_reason == "stopped by kill switch at a safe point"
+    resumed = run(load_state(path), path, limits=IterationLimits(20, 50, 1800))
+    assert resumed.current_stage == "report"
+
+
 def test_saved_state_contains_required_fields(tmp_path: Path) -> None:
     """The persisted JSON includes the schema version and all resume-critical keys."""
 

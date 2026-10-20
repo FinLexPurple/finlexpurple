@@ -24,6 +24,7 @@ from finlexpurple.orchestrator.persistence import create_run_directory, save_sta
 from finlexpurple.orchestrator.planner import Planner
 from finlexpurple.orchestrator.state import RunState
 from finlexpurple.recon.crawler import ReconResult
+from finlexpurple.security.safe_failure import SafeFailureController, StoppedAtSafePoint
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ def run(
     planner: Planner | None = None,
     executor: Executor | None = None,
     limits: IterationLimits | None = None,
+    controller: SafeFailureController | None = None,
 ) -> RunState:
     """Run or resume state transitions, saving after each completed stage.
 
@@ -145,6 +147,17 @@ def run(
     # Each iteration handles exactly one stage, persisting before looping, so a
     # kill at any point leaves a resumable state on disk.
     while state.current_stage != "report":
+        # Safe point (Phase 8 kill switch): if a stop was requested, halt here —
+        # between stages, with the last stage's state already persisted — rather
+        # than part-way through a stage.
+        if controller is not None:
+            try:
+                controller.checkpoint()
+            except StoppedAtSafePoint:
+                state.stop_reason = "stopped by kill switch at a safe point"
+                logger.warning("Orchestration stopped: %s", state.stop_reason)
+                save_current()
+                return state
         reason = reached(check_iterations=state.current_stage == "plan")
         if reason:
             state.stop_reason = reason
