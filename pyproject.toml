@@ -1,6 +1,6 @@
 [project]
 name = "finlexpurple"
-version = "0.1.0a1"
+version = "0.2.0a1"
 description = "Autonomous security testing agent (placeholder release)"
 readme = "README.md"
 license = "Apache-2.0"
