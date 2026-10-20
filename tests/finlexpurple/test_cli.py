@@ -40,10 +40,13 @@ def test_help_lists_registered_subcommands() -> None:
 
 
 def test_version_prints_current_version() -> None:
+    from finlexpurple import __version__
+
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    assert strip_ansi(result.stdout).strip() == "0.1.0a1"
+    # Assert against the package version so this cannot go stale on a bump.
+    assert strip_ansi(result.stdout).strip() == __version__
 
 
 def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
