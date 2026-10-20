@@ -105,6 +105,14 @@ TOOL_REGISTRY: dict[str, ExternalTool] = {
             },
         ),
         ExternalTool(
+            "cosign", "cosign", "Sigstore signing/verification for evidence bundles (Phase 12)",
+            {
+                "linux": "See https://docs.sigstore.dev/cosign/system_config/installation/",
+                "darwin": "brew install cosign",
+                "windows": "scoop install cosign (or see https://docs.sigstore.dev/cosign/system_config/installation/)",
+            },
+        ),
+        ExternalTool(
             "mcp-scan", "mcp-scan", "Passive MCP configuration scanner (Phase 9)",
             {
                 "linux": "pipx install mcp-scan  (verify the current command in its project docs)",
