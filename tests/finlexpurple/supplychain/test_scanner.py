@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+
+import pytest
 
 from finlexpurple.supplychain.mode import ScanMode
 from finlexpurple.supplychain.scanner import read_dependencies, scan_supplychain
@@ -24,8 +27,13 @@ def test_read_dependencies_from_requirements_and_package_json(tmp_path: Path) ->
     assert ("jest", "npm") in deps
 
 
-def test_scan_warns_when_wrapped_tools_absent(tmp_path: Path) -> None:
-    # No runners injected and neither binary is installed here -> honest warnings.
+def test_scan_warns_when_wrapped_tools_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Force the "tool absent" path deterministically, regardless of what is
+    # installed on the machine running the suite (the binaries resolve via
+    # shutil.which in the registry).
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     (tmp_path / "requirements.txt").write_text("requests==2.19.0\n", encoding="utf-8")
     result = scan_supplychain(tmp_path, mode=ScanMode.OFFLINE)
     assert any("osv-scanner not installed" in w for w in result.warnings)

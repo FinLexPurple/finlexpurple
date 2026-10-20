@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
+
+import pytest
 
 from finlexpurple.container.scanner import scan_container
 from finlexpurple.supplychain.mode import ScanMode
@@ -40,7 +43,9 @@ def test_project_scan_lints_and_checks_escape(tmp_path: Path) -> None:
     assert "container_runs_as_root" in classes  # original escape check
 
 
-def test_warns_when_tools_absent() -> None:
+def test_warns_when_tools_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Force the "tool absent" path deterministically, independent of the machine.
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     result = scan_container(image="img", mode=ScanMode.OFFLINE)
     assert any("trivy not installed" in w for w in result.warnings)
     assert any("grype not installed" in w for w in result.warnings)
