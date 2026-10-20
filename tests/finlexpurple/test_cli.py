@@ -121,7 +121,9 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     seen: list[bool] = []
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
     monkeypatch.setattr("finlexpurple.cli.run_setup", lambda fake_hardware_profile=None: True)
-    monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target: object())
+    monkeypatch.setattr(
+        "finlexpurple.cli.confirm_scope", lambda target: SimpleNamespace(first_confirmed_at=None)
+    )
     monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
 
     commands = (
@@ -372,3 +374,81 @@ def test_setup_isolation_rejects_unknown_tier(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["setup-isolation"], input="ultra\n")
     assert result.exit_code == 2
     assert "Unknown tier" in strip_ansi(result.output)
+
+
+def _scan_env(tmp_path, monkeypatch) -> None:
+    """Make scans write under tmp and use a tmp scope cache with stubbed recon."""
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "cfg"
+    )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *a, **k: stub_recon_result())
+
+
+def test_scan_records_authorization_attestation_and_fix_mode(tmp_path, monkeypatch) -> None:
+    """Phase 8: scan records the authorization attestation + fix mode in the run audit log."""
+
+    _scan_env(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["scan", "--target", "https://example.com/", "--fix-mode", "agent"], input="y\n"
+    )
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "Authorization attested for https://example.com/" in output
+    assert "Fix mode: agent." in output
+    audits = list((tmp_path / "finlexpurple-reports").glob("*/audit.jsonl"))
+    assert len(audits) == 1
+    content = audits[0].read_text(encoding="utf-8")
+    assert "authorization_attested" in content and "fix_mode_selected" in content
+
+
+def test_scan_defaults_fix_mode_to_human(tmp_path, monkeypatch) -> None:
+    _scan_env(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="y\n")
+    assert result.exit_code == 0, strip_ansi(result.output)
+    assert "Fix mode: human." in strip_ansi(result.output)
+
+
+def test_scan_rejects_invalid_fix_mode(tmp_path, monkeypatch) -> None:
+    _scan_env(tmp_path, monkeypatch)
+    result = runner.invoke(
+        app, ["scan", "--target", "https://example.com/", "--fix-mode", "auto"], input="y\n"
+    )
+    assert result.exit_code == 2
+    assert "Invalid --fix-mode" in strip_ansi(result.output)
+
+
+def test_resume_by_run_id_continues_and_cached_scope_is_not_reprompted(tmp_path, monkeypatch) -> None:
+    """Phase 8: `resume <run-id>` resolves the run dir and continues without re-prompting."""
+
+    _scan_env(tmp_path, monkeypatch)
+    first = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="y\n")
+    assert first.exit_code == 0, strip_ansi(first.output)
+    states = list((tmp_path / "finlexpurple-reports").glob("*/run-state.json"))
+    assert len(states) == 1
+    run_id = states[0].parent.name
+
+    result = runner.invoke(app, ["resume", run_id])  # cached scope -> no prompt
+    output = strip_ansi(result.output)
+    assert result.exit_code == 0, output
+    assert "Scope already confirmed" in output
+    assert "Orchestration complete" in output
+    # The audit chain continued across the two runs and still verifies.
+    from finlexpurple.security.audit_log import AuditLog
+
+    assert AuditLog.verify_file(states[0].parent / "audit.jsonl") is True
+
+
+def test_resume_unknown_run_id_is_rejected(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["resume", "nope-not-a-run"])
+    assert result.exit_code == 2
+    assert "No run-state.json found" in strip_ansi(result.output)
+
+
+def test_resume_rejects_traversal_run_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["resume", "../escape"])
+    assert result.exit_code == 2
+    assert "Invalid run id" in strip_ansi(result.output)

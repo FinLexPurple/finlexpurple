@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
@@ -12,6 +13,9 @@ from dotenv import dotenv_values, set_key
 
 from finlexpurple import __version__
 from finlexpurple.config import Config, ConfigurationError
+from finlexpurple.gates.authorization import record_attestation
+from finlexpurple.gates.fix_mode import FixModeError, resolve_fix_mode
+from finlexpurple.gates.kill_switch import KillSwitch
 from finlexpurple.hardware.detect import detect_hardware
 from finlexpurple.hardware.doctor import format_facts
 from finlexpurple.hardware.profiles import hardware_profile, profile_names
@@ -25,14 +29,16 @@ from finlexpurple.orchestrator.iteration_limits import (
 )
 from finlexpurple.orchestrator.persistence import load_state
 from finlexpurple.orchestrator.planner import Planner
-from finlexpurple.orchestrator.state import InvalidRunStateError
+from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
 from finlexpurple.providers.factory import create_provider
 from finlexpurple.recon.crawler import ReconError, run_recon
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
 from finlexpurple.scope.enforcement import OutOfScopeError
-from finlexpurple.scope.models import InvalidTargetError, Target
+from finlexpurple.scope.models import InvalidTargetError, ScopeDefinition, Target
 from finlexpurple.security import isolation
+from finlexpurple.security.audit_log import AuditLog
 from finlexpurple.security.isolation import IsolationTier
+from finlexpurple.security.safe_failure import SafeFailureController
 from finlexpurple.tools.installed_check import check_tools, format_tool_report
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
@@ -63,6 +69,101 @@ def root_callback(
 
 def _stub(command: str, phase: int) -> None:
     typer.echo(f"{command} is not yet implemented (lands in Phase {phase})")
+
+
+def _load_and_validate_resume(state_path: Path) -> tuple[RunState, Target]:
+    """Load a saved run and fully re-validate it before it is trusted for resume.
+
+    Shared by ``scan --resume`` and ``resume <run-id>``: the run_id must match the
+    target hash and be traversal-free, the file must live at
+    ``<run_id>/run-state.json``, and the saved canonical target must already be
+    normalized (an un-normalized target signals tampering). Exits 2 on any
+    problem rather than raising a traceback.
+    """
+
+    try:
+        state = load_state(state_path)
+        run_id = run_id_for_resume(state)
+        if state_path.name != "run-state.json" or state_path.parent.name != run_id:
+            raise InvalidRunStateError("Cannot resume: state file path does not match its run_id.")
+        normalized_target = Target.parse(state.canonical_target)
+        if normalized_target.canonical != state.canonical_target:
+            raise InvalidRunStateError("Cannot resume: saved canonical target is not normalized.")
+        return state, normalized_target
+    except (InvalidRunStateError, ValueError, OSError) as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+
+
+def _orchestrate_and_report(
+    state: RunState,
+    state_path: Path,
+    normalized_target: Target,
+    confirmed_scope: ScopeDefinition,
+    fix_mode_value: str | None,
+) -> None:
+    """Record the authorization attestation + fix mode, then drive the engine under a kill switch.
+
+    Shared tail for ``scan`` and ``resume``. Writes the run's tamper-evident
+    audit log (Phase 7), records the authorization attestation (Phase 8, §28 #7)
+    with the scope-confirmation timestamp, resolves the fix mode (Phase 8, §2),
+    and arms the kill switch (Phase 8, §28 #8) around the orchestration so Ctrl+C
+    halts gracefully at a safe point.
+    """
+
+    audit = AuditLog(state_path.parent / "audit.jsonl")
+    attested_at = confirmed_scope.first_confirmed_at or datetime.now(timezone.utc)
+    record_attestation(audit, target=normalized_target.canonical, attested_at=attested_at)
+    typer.echo(
+        f"Authorization attested for {normalized_target.canonical} "
+        "(recorded in the run audit log)."
+    )
+    try:
+        fix = resolve_fix_mode(fix_mode_value, interactive=False)
+    except FixModeError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+    audit.record("fix_mode_selected", mode=fix.value)
+    typer.echo(f"Fix mode: {fix.value}.")
+
+    # A provider is optional: it only lets the planner reorder actions. If none
+    # is configured, or configuration/construction fails, the scan proceeds with
+    # the deterministic ordering rather than aborting.
+    provider = None
+    if os.environ.get("LLM_PROVIDER"):
+        try:
+            config = Config.load()
+            provider = create_provider(config)
+        except (ConfigurationError, ValueError, OSError):
+            provider = None
+
+    controller = SafeFailureController()
+
+    def _on_kill() -> None:
+        audit.record("kill_switch_engaged")
+
+    kill_switch = KillSwitch(controller, on_stop=_on_kill)
+    try:
+        limits = IterationLimits.from_environment()
+        with kill_switch:
+            final_state = run_orchestration(
+                state,
+                state_path,
+                planner=Planner(provider),
+                limits=limits,
+                controller=controller,
+            )
+    except (IterationLimitConfigurationError, OSError, ValueError) as exc:
+        typer.echo(f"Orchestration could not continue safely: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if final_state.stop_reason:
+        typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
+        typer.echo(f"Resume with: finlexpurple resume {state_path.parent.name}")
+    else:
+        typer.echo(
+            f"Orchestration complete: {final_state.counters['iterations']} iterations, "
+            f"{final_state.counters['tool_calls']} detector calls. Phase 6 stub returned no findings."
+        )
 
 
 @app.command()
@@ -163,6 +264,10 @@ def scan(
         float,
         typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests (default 0.5)."),
     ] = 0.5,
+    fix_mode: Annotated[
+        str | None,
+        typer.Option("--fix-mode", help="'agent' or 'human' (default human); recorded for the fix stage (Phase 15)."),
+    ] = None,
 ) -> None:
     """Confirm scope, map endpoints, and run the bounded orchestration loop.
 
@@ -184,23 +289,8 @@ def scan(
     state = None
     state_path: Path
     if resume is not None:
-        try:
-            # Resume is only as trustworthy as the file it reads, so the saved
-            # state is fully re-validated: run_id must match the target hash and
-            # be traversal-free, the file must actually live at
-            # <run_id>/run-state.json, and the saved target must already be in
-            # canonical form (an un-normalized target signals tampering).
-            state = load_state(resume)
-            run_id = run_id_for_resume(state)
-            if resume.name != "run-state.json" or resume.parent.name != run_id:
-                raise InvalidRunStateError("Cannot resume: state file path does not match its run_id.")
-            normalized_target = Target.parse(state.canonical_target)
-            if normalized_target.canonical != state.canonical_target:
-                raise InvalidRunStateError("Cannot resume: saved canonical target is not normalized.")
-            state_path = resume
-        except (InvalidRunStateError, ValueError, OSError) as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=2) from None
+        state, normalized_target = _load_and_validate_resume(resume)
+        state_path = resume
     else:
         assert target is not None
         try:
@@ -256,31 +346,7 @@ def scan(
         typer.echo("Cannot resume: confirmed target does not match the saved canonical target.", err=True)
         raise typer.Exit(code=2)
 
-    # A provider is optional: it only lets the planner reorder actions. If none
-    # is configured, or configuration/construction fails, the scan proceeds with
-    # the deterministic ordering rather than aborting.
-    provider = None
-    if os.environ.get("LLM_PROVIDER"):
-        try:
-            config = Config.load()
-            provider = create_provider(config)
-        except (ConfigurationError, ValueError, OSError):
-            provider = None
-    limits: IterationLimits
-    try:
-        limits = IterationLimits.from_environment()
-        final_state = run_orchestration(state, state_path, planner=Planner(provider), limits=limits)
-    except (IterationLimitConfigurationError, OSError, ValueError) as exc:
-        typer.echo(f"Orchestration could not continue safely: {exc}", err=True)
-        raise typer.Exit(code=1) from None
-    if final_state.stop_reason:
-        typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
-        typer.echo(f"Resume with: finlexpurple scan --resume {state_path}")
-    else:
-        typer.echo(
-            f"Orchestration complete: {final_state.counters['iterations']} iterations, "
-            f"{final_state.counters['tool_calls']} detector calls. Phase 6 stub returned no findings."
-        )
+    _orchestrate_and_report(state, state_path, normalized_target, confirmed_scope, fix_mode)
 
 
 @telemetry_app.command()
@@ -370,6 +436,42 @@ def setup_isolation() -> None:
         typer.echo(f"Could not save {isolation.ISOLATION_ENV_VAR} to {env_path}: {exc}", err=True)
         raise typer.Exit(code=1) from None
     typer.echo(f"Saved {isolation.ISOLATION_ENV_VAR}={tier.value} to {env_path}.")
+
+
+@app.command()
+def resume(
+    run_id: Annotated[
+        str,
+        typer.Argument(help="Run id (the directory name under finlexpurple-reports/) to resume."),
+    ],
+) -> None:
+    """Resume a paused run by its run id.
+
+    Resolves ``./finlexpurple-reports/<run-id>/run-state.json``, re-confirms
+    scope, and continues from where the run stopped. Equivalent to
+    ``scan --resume <path>`` but by id.
+    """
+
+    if "/" in run_id or "\\" in run_id or ".." in run_id:
+        typer.echo("Invalid run id.", err=True)
+        raise typer.Exit(code=2)
+    state_path = Path.cwd() / "finlexpurple-reports" / run_id / "run-state.json"
+    if not state_path.is_file():
+        typer.echo(
+            f"No run-state.json found for run id {run_id!r} under finlexpurple-reports/.",
+            err=True,
+        )
+        raise typer.Exit(code=2)
+    state, normalized_target = _load_and_validate_resume(state_path)
+    try:
+        confirmed_scope = confirm_scope(normalized_target)
+    except ScopeStorageError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if confirmed_scope is None:
+        typer.echo("Scope was not confirmed; nothing to resume.", err=True)
+        raise typer.Exit(code=1)
+    _orchestrate_and_report(state, state_path, normalized_target, confirmed_scope, None)
 
 
 app.add_typer(telemetry_app, name="telemetry")
