@@ -13,6 +13,8 @@ from dotenv import dotenv_values, set_key
 
 from finlexpurple import __version__
 from finlexpurple.config import Config, ConfigurationError
+from finlexpurple.evidence.bundle import BundleFormatError
+from finlexpurple.evidence.verify import verify_bundle
 from finlexpurple.gates.authorization import record_attestation
 from finlexpurple.gates.fix_mode import FixModeError, resolve_fix_mode
 from finlexpurple.gates.kill_switch import KillSwitch
@@ -472,6 +474,51 @@ def resume(
         typer.echo("Scope was not confirmed; nothing to resume.", err=True)
         raise typer.Exit(code=1)
     _orchestrate_and_report(state, state_path, normalized_target, confirmed_scope, None)
+
+
+@app.command(name="verify-bundle")
+def verify_bundle_command(
+    bundle_path: Annotated[
+        Path,
+        typer.Argument(help="Path to an evidence bundle (.json) to verify."),
+    ],
+    expected_hash: Annotated[
+        str | None,
+        typer.Option(
+            "--expected-hash",
+            help="The content hash the report quoted; checks the full chain (optional).",
+        ),
+    ] = None,
+) -> None:
+    """Independently re-verify an evidence bundle — standalone and fully offline.
+
+    Reads only the bundle file: no scan runs and no network is used. It
+    recomputes the canonical content hash and compares it to the stored hash so
+    a third party (auditor/client) can confirm the bundle was not altered, and,
+    if ``--expected-hash`` is given, that it matches the report. A present
+    signature is reported but not cryptographically checked here (keyless
+    verification needs connectivity); the hash check stands on its own. Exits
+    non-zero if verification fails.
+    """
+
+    try:
+        text = bundle_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        typer.echo(f"Could not read bundle {bundle_path}: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+    try:
+        report = verify_bundle(text, expected_hash=expected_hash)
+    except BundleFormatError as exc:
+        typer.echo(f"Not a valid evidence bundle: {exc}", err=True)
+        raise typer.Exit(code=2) from None
+
+    for message in report.messages:
+        typer.echo(f"  {message}")
+    if report.ok:
+        typer.echo("OK: bundle verified.")
+    else:
+        typer.echo("FAILED: bundle did not verify.", err=True)
+        raise typer.Exit(code=1)
 
 
 app.add_typer(telemetry_app, name="telemetry")
