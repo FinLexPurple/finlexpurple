@@ -83,6 +83,64 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  github-release:
+    name: Publish GitHub Release notes
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Extract this version's CHANGELOG section
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          tag = os.environ["RELEASE_TAG"]
+          version = tag.removeprefix("v")
+          lines = Path("CHANGELOG.md").read_text(encoding="utf-8").splitlines()
+          start = next(
+              (i for i, line in enumerate(lines) if line.startswith(f"## [{version}]")),
+              None,
+          )
+          if start is None:
+              raise SystemExit(f"No CHANGELOG.md section for version {version!r}.")
+          end = next(
+              (j for j in range(start + 1, len(lines)) if lines[j].startswith("## ")),
+              len(lines),
+          )
+          body = "\n".join(lines[start:end]).strip() + "\n"
+          Path("release-notes.md").write_text(body, encoding="utf-8")
+          print(body)
+          PY
+      - name: Create or update the GitHub Release from the CHANGELOG section
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          # A tag without a plain vMAJOR.MINOR.PATCH form is a pre-release.
+          IS_STABLE: ${{ needs.build.outputs.is_stable }}
+        run: |
+          prerelease_flag="--prerelease"
+          if [ "$IS_STABLE" = "true" ]; then
+            prerelease_flag=""
+          fi
+          # Idempotent: create the Release, or update its notes if it already exists.
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --notes-file release-notes.md
+          else
+            gh release create "$RELEASE_TAG" \
+              --title "$RELEASE_TAG" \
+              --notes-file release-notes.md \
+              $prerelease_flag
+          fi
+
   publish-testpypi:
     name: Publish to TestPyPI
     needs: build
