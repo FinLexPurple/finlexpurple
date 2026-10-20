@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -52,6 +53,21 @@ def test_runs_in_the_given_working_directory(tmp_path: Path) -> None:
     )
     assert str(tmp_path.resolve()) in Path(result.stdout.strip()).resolve().as_posix() or \
         result.stdout.strip() == str(tmp_path)
+
+
+def test_default_env_strips_secrets_but_preserves_runtime_vars(monkeypatch) -> None:
+    # A secret-named var must not reach the tool; a normal var and PATH must.
+    monkeypatch.setenv("FINLEXPURPLE_DEMO_API_KEY", "super-secret")
+    monkeypatch.setenv("FINLEXPURPLE_DEMO_PUBLIC", "ok")
+    result = run_sandboxed(
+        [sys.executable, "-c", "import os, json; print(json.dumps(dict(os.environ)))"],
+        timeout=10,
+    )
+    assert result.returncode == 0, result.stderr  # Python actually started (needs SYSTEMROOT on Windows)
+    child_env = json.loads(result.stdout.strip())
+    assert "FINLEXPURPLE_DEMO_API_KEY" not in child_env  # secret stripped
+    assert child_env.get("FINLEXPURPLE_DEMO_PUBLIC") == "ok"  # non-secret preserved
+    assert "PATH" in child_env
 
 
 def test_empty_argv_and_bad_timeout_are_rejected() -> None:

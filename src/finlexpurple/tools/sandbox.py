@@ -8,9 +8,13 @@ scanner (Phase 13/14) runs under:
   cannot be interpolated into a shell command.
 * **Enforced timeout** — a process that exceeds its timeout is *killed* (its
   whole process group on POSIX), never left running.
-* **stdout/stderr captured separately**, returncode surfaced, with a minimal
-  environment by default (only ``PATH`` unless the caller passes ``env``), so a
-  wrapped tool does not inherit the parent's secrets.
+* **stdout/stderr captured separately**, returncode surfaced. By default the
+  tool's environment is the process environment **with secret-named variables
+  removed** (names containing ``KEY``/``TOKEN``/``SECRET``, the same classes the
+  logger redacts), so API keys are not leaked to a wrapped tool while the OS
+  runtime variables it needs (``PATH``, and on Windows ``SYSTEMROOT``/``TEMP``/
+  … which Python requires to start) are preserved. A caller may pass an explicit
+  ``env`` to override this entirely.
 * **Restricted working directory** — runs in ``cwd`` (a temp dir by default),
   never the repository or an arbitrary location.
 """
@@ -18,6 +22,7 @@ scanner (Phase 13/14) runs under:
 from __future__ import annotations
 
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -26,6 +31,21 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from time import monotonic
+
+# Environment variables whose names mark them as secrets (same classes the
+# logger redacts). These are stripped from a sandboxed tool's environment.
+_SECRET_ENV_NAME = re.compile(r"(?:KEY|TOKEN|SECRET)", re.IGNORECASE)
+
+
+def _default_tool_env() -> dict[str, str]:
+    """The process environment minus secret-named variables.
+
+    Preserves every OS runtime variable a tool needs (PATH, and on Windows
+    SYSTEMROOT/TEMP/… that Python requires to start) while removing API keys,
+    tokens, and secrets so a wrapped tool never inherits them.
+    """
+
+    return {k: v for k, v in os.environ.items() if not _SECRET_ENV_NAME.search(k)}
 
 
 @dataclass(frozen=True)
@@ -63,7 +83,7 @@ def run_sandboxed(
     if timeout <= 0:
         raise ValueError("timeout must be positive.")
 
-    run_env = {"PATH": os.environ.get("PATH", "")} if env is None else dict(env)
+    run_env = _default_tool_env() if env is None else dict(env)
     posix = os.name != "nt"
     started = monotonic()
     with tempfile.TemporaryDirectory(prefix="flp-sandbox-") as default_cwd:
