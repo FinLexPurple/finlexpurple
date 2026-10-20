@@ -111,6 +111,12 @@ _BOUNDARY_SCRIPT = (
 )
 
 
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Standard-tier boundary uses Linux-container flags (--read-only, --cap-drop ALL, "
+    "--tmpfs) that Docker rejects on Windows containers; it needs a Linux container runtime "
+    "(the ubuntu CI job is the container-boundary coverage)",
+)
 @pytest.mark.skipif(not isolation.docker_available(), reason="Docker not available")
 def test_standard_tier_boundary_end_to_end(tmp_path: Path) -> None:
     source_dir = tmp_path / "src"
