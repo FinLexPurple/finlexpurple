@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -84,7 +85,7 @@ def run_sandboxed(
             stdout, stderr = process.communicate(input=input_text, timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            _terminate(process, posix)
+            _terminate(process)
             stdout, stderr = process.communicate()
         return ToolResult(
             argv=tuple(args),
@@ -96,11 +97,11 @@ def run_sandboxed(
         )
 
 
-def _terminate(process: subprocess.Popen[str], posix: bool) -> None:
+def _terminate(process: subprocess.Popen[str]) -> None:
     """Kill a timed-out process (its whole group on POSIX) so nothing is left running."""
 
     try:
-        if posix:
+        if sys.platform != "win32":
             os.killpg(os.getpgid(process.pid), signal.SIGKILL)
         else:
             process.kill()

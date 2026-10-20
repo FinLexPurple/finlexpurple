@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import Mapping, Sequence
 from enum import Enum
 from pathlib import Path
@@ -101,7 +102,7 @@ def docker_available() -> bool:
 def _container_user() -> str | None:
     """Run as the host's own uid:gid on POSIX (non-root, and able to write the output mount)."""
 
-    if os.name == "nt":
+    if sys.platform == "win32":
         return None
     uid, gid = os.getuid(), os.getgid()
     # Never run as root inside the container; if the host user is root, drop to 'nobody'.
