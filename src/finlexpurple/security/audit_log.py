@@ -60,6 +60,18 @@ class AuditLog:
         self.path = path
         self._seq = 0
         self._last_hash = GENESIS_HASH
+        # Continue an existing chain (e.g. a resumed run appends to the same log)
+        # rather than restarting the sequence, which would corrupt it. A broken
+        # existing chain raises instead of being appended to.
+        if path.exists() and path.stat().st_size > 0:
+            self._resume_existing_chain()
+
+    def _resume_existing_chain(self) -> None:
+        self.verify_file(self.path)  # raises AuditLogError if the chain is broken
+        lines = [line for line in self.path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        last = json.loads(lines[-1])
+        self._seq = len(lines)
+        self._last_hash = last["entry_hash"]
 
     def record(self, action: str, **details: Any) -> dict[str, Any]:
         """Append one action entry and return it. Details must be non-sensitive."""

@@ -41,6 +41,27 @@ def test_tampering_with_an_entry_is_detected(tmp_path: Path) -> None:
         AuditLog.verify_file(path)
 
 
+def test_reopening_continues_the_existing_chain(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    first = AuditLog(path)
+    first.record("a")
+    first.record("b")
+    # A new instance (e.g. a resumed run) appends to the same chain, not seq 0.
+    second = AuditLog(path)
+    entry = second.record("c")
+    assert entry["seq"] == 2
+    assert AuditLog.verify_file(path) is True
+    assert len([ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]) == 3
+
+
+def test_reopening_a_corrupt_chain_raises(tmp_path: Path) -> None:
+    path = tmp_path / "audit.jsonl"
+    AuditLog(path).record("a")
+    path.write_text(path.read_text(encoding="utf-8").replace('"a"', '"tampered"'), encoding="utf-8")
+    with pytest.raises(AuditLogError):
+        AuditLog(path)
+
+
 def test_dropping_an_entry_breaks_the_chain(tmp_path: Path) -> None:
     path = tmp_path / "audit.jsonl"
     log = AuditLog(path)
