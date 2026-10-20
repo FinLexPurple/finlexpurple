@@ -110,6 +110,8 @@ class Finding(BaseModel):
     vulnerability_class: str
     method: str
     url: str
+    # The exact triggering payload, stored so the finding is replayable (§6 Layer 1).
+    payload: str
     headers: dict[str, str] = Field(default_factory=dict)
     body: str | None = None
     response_snapshot: str | None = None
@@ -120,6 +122,9 @@ class Finding(BaseModel):
     discovered_at: datetime
     # Populated from Phase 18 onward with the named agent that produced it.
     agent: str | None = None
+    # Set by the Phase 11 verification engine: a deterministic record of the
+    # replay attempt. None until verification runs.
+    verification_log: str | None = None
 
     @classmethod
     def new(
@@ -151,6 +156,7 @@ class Finding(BaseModel):
             vulnerability_class=vulnerability_class,
             method=method.upper().strip(),
             url=url.strip(),
+            payload=payload,
             headers=resolved_headers,
             body=body,
             response_snapshot=response_snapshot,
