@@ -138,7 +138,9 @@ def run_osv_scanner(
 ) -> list[Finding]:
     """Run osv-scanner over a project tree and return normalized findings (or [])."""
 
-    args: list[str] = ["--format", "json", "--recursive", str(project_path)]
+    # Absolute path: the hardened sandbox runs in an isolated temp cwd, so a
+    # relative path would not resolve and the scan would silently find nothing.
+    args: list[str] = ["--format", "json", "--recursive", str(Path(project_path).resolve())]
     if offline:
         # Use OSV's local database so an air-gapped run uses the last-refreshed feed.
         args.insert(0, "--offline-vulnerabilities")

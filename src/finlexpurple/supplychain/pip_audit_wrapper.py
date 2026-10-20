@@ -90,7 +90,8 @@ def run_pip_audit(
 ) -> list[Finding]:
     """Run pip-audit against a requirements file and return normalized findings (or [])."""
 
-    args: list[str] = ["--format", "json", "--requirement", str(requirements)]
+    # Absolute path: the sandbox runs in an isolated temp cwd (see osv_wrapper).
+    args: list[str] = ["--format", "json", "--requirement", str(Path(requirements).resolve())]
     if runner is not None:
         returncode, stdout, stderr = runner(args)
     else:

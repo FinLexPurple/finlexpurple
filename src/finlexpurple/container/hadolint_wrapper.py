@@ -81,7 +81,9 @@ def run_hadolint(
 ) -> list[Finding]:
     """Lint a Dockerfile with hadolint and return normalized findings (or [])."""
 
-    args: list[str] = ["--format", "json", str(dockerfile)]
+    # Absolute path: the sandbox runs in an isolated temp cwd, so a relative
+    # Dockerfile path would not resolve and the lint would silently find nothing.
+    args: list[str] = ["--format", "json", str(Path(dockerfile).resolve())]
     if runner is not None:
         returncode, stdout, stderr = runner(args)
     else:

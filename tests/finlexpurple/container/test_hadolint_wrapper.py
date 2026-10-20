@@ -43,3 +43,16 @@ def test_empty_invalid_and_run() -> None:
     with pytest.raises(HadolintError):
         parse_hadolint_output(json.dumps({"not": "a list"}))
     assert len(run_hadolint(Path("Dockerfile"), runner=lambda args: (1, _HADOLINT_JSON, ""))) == 2
+
+
+def test_dockerfile_path_is_passed_absolute() -> None:
+    # Regression: the sandbox runs in an isolated cwd, so a relative path would
+    # silently find nothing. The wrapper must resolve it to absolute.
+    captured: dict[str, list[str]] = {}
+
+    def runner(args: object) -> tuple[int, str, str]:
+        captured["args"] = [str(a) for a in args]  # type: ignore[arg-type]
+        return (0, "[]", "")
+
+    run_hadolint(Path("Dockerfile"), runner=runner)
+    assert captured["args"][-1] == str(Path("Dockerfile").resolve())

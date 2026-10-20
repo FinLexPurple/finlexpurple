@@ -77,3 +77,15 @@ def test_run_with_injected_runner() -> None:
 
     findings = run_pip_audit(Path("requirements.txt"), runner=runner)
     assert len(findings) == 1
+
+
+def test_requirements_path_is_passed_absolute() -> None:
+    # Regression: the sandbox runs in an isolated cwd; the path must be absolute.
+    captured: dict[str, list[str]] = {}
+
+    def runner(args: object) -> tuple[int, str, str]:
+        captured["args"] = [str(a) for a in args]  # type: ignore[arg-type]
+        return (0, "[]", "")
+
+    run_pip_audit(Path("requirements.txt"), runner=runner)
+    assert captured["args"][-1] == str(Path("requirements.txt").resolve())

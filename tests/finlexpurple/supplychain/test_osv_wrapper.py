@@ -85,3 +85,18 @@ def test_run_with_injected_runner_error_exit_raises() -> None:
 
     with pytest.raises(OSVScannerError):
         run_osv_scanner(project_path=__import__("pathlib").Path("."), runner=runner)
+
+
+def test_project_path_is_passed_absolute() -> None:
+    # Regression: the sandbox runs in an isolated cwd; a relative path would make
+    # the scan silently find nothing, so the wrapper must resolve it.
+    from pathlib import Path
+
+    captured: dict[str, list[str]] = {}
+
+    def runner(args: object) -> tuple[int, str, str]:
+        captured["args"] = [str(a) for a in args]  # type: ignore[arg-type]
+        return (0, "", "")
+
+    run_osv_scanner(project_path=Path("."), runner=runner)
+    assert str(Path.cwd()) in captured["args"]  # Path(".").resolve() == cwd
