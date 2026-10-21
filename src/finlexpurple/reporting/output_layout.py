@@ -62,15 +62,25 @@ def write_report(
     *,
     target: str,
     out_root: Path | None = None,
+    out_dir: Path | None = None,
     explainer: Explainer | None = None,
     now: datetime | None = None,
 ) -> ReportPaths:
-    """Write the full report tree for ``findings`` and return its paths."""
+    """Write the full report tree for ``findings`` and return its paths.
+
+    By default the tree is created under ``out_root/<target>-<timestamp>/``. When
+    ``out_dir`` is given it is used directly (no ``<target>-<timestamp>`` subdir),
+    so a caller such as ``scan`` can place the report inside an existing run
+    directory alongside ``run-state.json``.
+    """
 
     stamp = now or datetime.now(timezone.utc)
     timestamp = stamp.strftime("%Y%m%dT%H%M%SZ")
-    root = out_root or (Path.cwd() / "finlexpurple-reports")
-    directory = root / f"{_slug(target)}-{timestamp}"
+    if out_dir is not None:
+        directory = out_dir
+    else:
+        root = out_root or (Path.cwd() / "finlexpurple-reports")
+        directory = root / f"{_slug(target)}-{timestamp}"
     evidence_dir = directory / "evidence"
     replay_logs_dir = directory / "replay-logs"
     for d in (directory, evidence_dir, replay_logs_dir):

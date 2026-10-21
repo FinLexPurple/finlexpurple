@@ -64,3 +64,15 @@ def test_unverified_finding_has_no_bundle(tmp_path: Path) -> None:
     f = Finding.new(vulnerability_class="idor", method="GET", url="http://t/i", payload="id=1")
     paths = write_report([f], target="t", out_root=tmp_path, now=_NOW)
     assert not (paths.evidence_dir / f"{f.finding_id}.bundle.json").exists()
+
+
+def test_out_dir_writes_report_directly_without_subdir(tmp_path: Path) -> None:
+    # scan integration: with out_dir, the report lands in the given directory
+    # (no <target>-<timestamp> subdir), e.g. alongside run-state.json.
+    run_dir = tmp_path / "an-existing-run"
+    run_dir.mkdir()
+    paths = write_report([_verified()], target="t", out_dir=run_dir, now=_NOW)
+    assert paths.directory == run_dir
+    assert (run_dir / "report.json").is_file()
+    assert (run_dir / "report.md").is_file()
+    assert (run_dir / "evidence").is_dir()
