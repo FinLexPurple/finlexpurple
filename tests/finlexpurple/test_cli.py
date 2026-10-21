@@ -187,7 +187,7 @@ def test_scan_resume_revalidates_saved_target_scope_and_skips_recon(tmp_path, mo
     assert result.exit_code == 0, output
     assert "Resolved target: https://example.com/" in output
     assert "Scope confirmation saved locally" in output
-    assert "Orchestration complete" in output
+    assert "Scan complete" in output  # now end-to-end: writes a report
     assert state_path.exists()
 
 
@@ -436,7 +436,7 @@ def test_resume_by_run_id_continues_and_cached_scope_is_not_reprompted(tmp_path,
     output = strip_ansi(result.output)
     assert result.exit_code == 0, output
     assert "Scope already confirmed" in output
-    assert "Orchestration complete" in output
+    assert "Scan complete" in output  # now end-to-end: writes a report
     # The audit chain continued across the two runs and still verifies.
     from finlexpurple.security.audit_log import AuditLog
 

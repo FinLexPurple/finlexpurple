@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
 import typer
 from dotenv import dotenv_values, set_key
 
 from finlexpurple import __version__
 from finlexpurple.config import Config, ConfigurationError
+from finlexpurple.detectors.prober import HttpProber
+from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.bundle import BundleFormatError
 from finlexpurple.evidence.verify import verify_bundle
 from finlexpurple.gates.authorization import record_attestation
@@ -25,6 +29,7 @@ from finlexpurple.hardware.wizard import run_setup
 from finlexpurple.logging_setup import configure_logging
 from finlexpurple.orchestrator.engine import run as run_orchestration
 from finlexpurple.orchestrator.engine import run_id_for_resume, state_from_recon
+from finlexpurple.orchestrator.executor import Executor, WebDetector
 from finlexpurple.orchestrator.iteration_limits import (
     IterationLimitConfigurationError,
     IterationLimits,
@@ -34,14 +39,22 @@ from finlexpurple.orchestrator.planner import Planner
 from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
 from finlexpurple.providers.factory import create_provider
 from finlexpurple.recon.crawler import ReconError, run_recon
+from finlexpurple.recon.fingerprint import Fingerprint
+from finlexpurple.reporting.output_layout import write_report
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
 from finlexpurple.scope.enforcement import OutOfScopeError
 from finlexpurple.scope.models import InvalidTargetError, ScopeDefinition, Target
 from finlexpurple.security import isolation
 from finlexpurple.security.audit_log import AuditLog
+from finlexpurple.security.budget import RateLimiter, RequestBudget
+from finlexpurple.security.egress_policy import EgressPolicy
 from finlexpurple.security.isolation import IsolationTier
 from finlexpurple.security.safe_failure import SafeFailureController
 from finlexpurple.tools.installed_check import check_tools, format_tool_report
+from finlexpurple.verifier.replay.canary import HttpCanary
+
+# A per-run request kill-ceiling for the detection prober (§15 default-on cap).
+_DETECTION_REQUEST_BUDGET = 2000
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
 telemetry_app = typer.Typer(help="Manage optional telemetry.", no_args_is_help=True)
@@ -97,12 +110,29 @@ def _load_and_validate_resume(state_path: Path) -> tuple[RunState, Target]:
         raise typer.Exit(code=2) from None
 
 
+def _detection_origin(canonical_target: str) -> str | None:
+    """Return the ``scheme://netloc`` origin to probe, or None if not a URL.
+
+    Web detection rebuilds full endpoint URLs from ``origin`` + the persisted
+    path. Only HTTP(S) targets have a usable origin here; a network (IP/CIDR)
+    target's origin comes from the run's ``--root-url`` instead.
+    """
+
+    parts = urlsplit(canonical_target)
+    if parts.scheme in ("http", "https") and parts.netloc:
+        return f"{parts.scheme}://{parts.netloc}"
+    return None
+
+
 def _orchestrate_and_report(
     state: RunState,
     state_path: Path,
     normalized_target: Target,
     confirmed_scope: ScopeDefinition,
     fix_mode_value: str | None,
+    *,
+    request_delay: float = 0.5,
+    detect_origin: str | None = None,
 ) -> None:
     """Record the authorization attestation + fix mode, then drive the engine under a kill switch.
 
@@ -145,27 +175,68 @@ def _orchestrate_and_report(
         audit.record("kill_switch_engaged")
 
     kill_switch = KillSwitch(controller, on_stop=_on_kill)
+
+    # Wire the real web-detection + verification pipeline. Findings are collected
+    # in memory and written only to the 0600 report tree — never into
+    # run-state.json, which stays findings-empty by design (privacy guarantee).
+    collected: list[Finding] = []
+    origin = detect_origin or _detection_origin(state.canonical_target)
+    executor: Executor | None = None
+    canary_context: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
+    if origin is not None:
+        prober = HttpProber(
+            EgressPolicy.for_run(target_hosts=[urlsplit(origin).hostname or ""]),  # default-deny egress
+            budget=RequestBudget(_DETECTION_REQUEST_BUDGET),  # §15 request kill-ceiling
+            rate_limiter=RateLimiter(request_delay),
+        )
+        canary = HttpCanary()
+        canary_context = canary
+        fingerprint = Fingerprint(
+            server=state.fingerprints.get("server"),
+            technologies=tuple(state.fingerprints.get("technologies", [])),
+        )
+        executor = Executor(
+            {"phase8_stub": WebDetector(
+                origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
+            )}
+        )
+    else:
+        typer.echo("Note: web detection needs a URL origin; running recon/orchestration only.", err=True)
+
     try:
         limits = IterationLimits.from_environment()
-        with kill_switch:
+        with kill_switch, canary_context:
             final_state = run_orchestration(
                 state,
                 state_path,
                 planner=Planner(provider),
+                executor=executor,
                 limits=limits,
                 controller=controller,
             )
     except (IterationLimitConfigurationError, OSError, ValueError) as exc:
         typer.echo(f"Orchestration could not continue safely: {exc}", err=True)
         raise typer.Exit(code=1) from None
+
     if final_state.stop_reason:
         typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
         typer.echo(f"Resume with: finlexpurple resume {state_path.parent.name}")
-    else:
+        return
+    if origin is None:
         typer.echo(
             f"Orchestration complete: {final_state.counters['iterations']} iterations, "
-            f"{final_state.counters['tool_calls']} detector calls. Phase 6 stub returned no findings."
+            f"{final_state.counters['tool_calls']} detector calls; no web detectors ran."
         )
+        return
+    paths = write_report(collected, target=state.canonical_target, out_dir=state_path.parent)
+    audit.record("report_written", findings=len(collected))
+    verified = sum(1 for f in collected if f.status is FindingStatus.VERIFIED)
+    typer.echo(
+        f"Scan complete: {len(collected)} findings ({verified} verified) "
+        f"across {final_state.counters['tool_calls']} detector calls."
+    )
+    typer.echo(f"Report: {paths.report_md}")
+    typer.echo(f"        {paths.report_json}")
 
 
 @app.command()
@@ -348,7 +419,15 @@ def scan(
         typer.echo("Cannot resume: confirmed target does not match the saved canonical target.", err=True)
         raise typer.Exit(code=2)
 
-    _orchestrate_and_report(state, state_path, normalized_target, confirmed_scope, fix_mode)
+    _orchestrate_and_report(
+        state,
+        state_path,
+        normalized_target,
+        confirmed_scope,
+        fix_mode,
+        request_delay=request_delay,
+        detect_origin=_detection_origin(root_url) if root_url else None,
+    )
 
 
 @telemetry_app.command()
