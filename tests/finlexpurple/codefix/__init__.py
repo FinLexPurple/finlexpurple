@@ -1,1 +1,1 @@
-"""CodeFix tests are added in Phase 12."""
+"""CodeFix / whitebox module tests (Phase 15)."""
