@@ -29,6 +29,16 @@ if not any(isinstance(item, RedactionFilter) for item in _httpx_logger.filters):
 USER_AGENT = "FinLexPurple/0.1.0a1 (authorized security reconnaissance)"
 _HTML_TYPES = {"text/html", "application/xhtml+xml"}
 _REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+# Markers used to recognize HTML when a server sends no (or a text/plain)
+# Content-Type, so link discovery does not depend on a correct header.
+_HTML_SNIFF_MARKERS = ("<!doctype html", "<html", "<a ", "<a\t", "<a\n", "<form", "<body", "<head")
+
+
+def _looks_like_html(text: str) -> bool:
+    """Heuristic: does ``text`` contain HTML markup near its start?"""
+
+    head = text[:4096].lower()
+    return any(marker in head for marker in _HTML_SNIFF_MARKERS)
 
 
 class ReconError(ValueError):
@@ -386,12 +396,19 @@ def run_recon(
         content_type = headers.get("content-type", "").split(";", 1)[0].strip().lower() or None
         catalog.add("GET", page.url, content_type=content_type)
         pages_visited += 1
-        if content_type not in _HTML_TYPES:
+        body_text = body.decode("utf-8", errors="replace")
+        # Parse for links when the server declares HTML, or when it omits/mislabels
+        # the type (None or text/plain) but the body clearly contains HTML markup.
+        # A declared non-HTML type (JSON, images, ...) is never parsed as HTML.
+        is_html = content_type in _HTML_TYPES or (
+            content_type in (None, "text/plain") and _looks_like_html(body_text)
+        )
+        if not is_html:
             continue
-        page_fingerprint = identify(headers, body.decode("utf-8", errors="replace"))
+        page_fingerprint = identify(headers, body_text)
         fingerprint = _merge_fingerprints(fingerprint, page_fingerprint)
         parser = _PageParser()
-        parser.feed(body.decode("utf-8", errors="replace"))
+        parser.feed(body_text)
         for action, method, parameters in parser.forms:
             form_url = _canonical_candidate(final_url, action or final_url)
             if form_url is None:

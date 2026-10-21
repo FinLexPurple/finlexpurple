@@ -230,7 +230,7 @@ def test_scan_cli_runs_the_crawler_and_reports_the_safe_catalog(monkeypatch) -> 
     with outside, site:
         root = f"http://127.0.0.1:{site.port}/"
         scope = ScopeDefinition.for_target(Target.parse(root))
-        monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target: scope)
+        monkeypatch.setattr("finlexpurple.cli.confirm_scope", lambda target, **kwargs: scope)
 
         result = CliRunner().invoke(
             app,
@@ -244,3 +244,15 @@ def test_scan_cli_runs_the_crawler_and_reports_the_safe_catalog(monkeypatch) -> 
     assert "demo-secret" not in result.output
     assert "robots.txt Disallow: /private" in result.output
     assert outside.count == 0
+
+
+def test_looks_like_html_sniffs_bare_markup_and_rejects_non_html() -> None:
+    # Regression (Bug 2): a page served with no/ambiguous Content-Type must still
+    # be recognized as HTML so its links are crawled; real non-HTML is rejected.
+    from finlexpurple.recon.crawler import _looks_like_html
+
+    assert _looks_like_html('<a href="/search?q=t">s</a>') is True
+    assert _looks_like_html("<!DOCTYPE html><html><body>x</body></html>") is True
+    assert _looks_like_html('<form action="/submit"></form>') is True
+    assert _looks_like_html('{"findings": [], "note": "no markup here"}') is False
+    assert _looks_like_html("just some plain text") is False
