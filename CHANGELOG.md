@@ -7,8 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Milestone M3 (Phases 11–16). This milestone adds deterministic verification and
+the capabilities built on it. Every module below is implemented and tested;
+see **Known limitations** for how they are (and are not yet) reachable.
+
+### Added
+
+- **Deterministic verification engine** (Phase 11) — re-executes a finding by
+  code (SQLi error reproduction, IDOR two-session diff, SSRF out-of-band canary,
+  XSS via a headless-browser runner); a finding is `verified` only on a real
+  reproduction, never on an LLM's confidence. Quote-grounding rejects any
+  human-facing claim that cites evidence not present in the finding.
+- **Signed evidence bundle + `verify-bundle`** (Phase 12) — a reproducible
+  per-finding bundle (request/response, replay log, canonical hash; Sigstore/
+  cosign signature when online, hash-only offline). `finlexpurple verify-bundle`
+  re-checks a bundle **standalone and fully offline**, and detects tampering.
+- **Supply-chain module** (Phase 13) — wraps OSV-Scanner and pip-audit
+  (real JSON normalized to findings), plus original slopsquat / hallucinated-
+  dependency, payment-SDK typosquat, and secrets detection; online/offline modes
+  labeled honestly.
+- **Container module** (Phase 14) — wraps Trivy, Grype, Dockle, and hadolint,
+  plus original exposed-Docker-socket and container-escape-class checks. The
+  module never mounts the host socket and never runs privileged.
+- **AST CodeFix / whitebox module** (Phase 15) — tree-sitter parsing for JS/TS
+  and Python; minimal, reviewable diff patches; a safety gate (only-the-
+  construct, re-parse, backup-before-write) and local branch/commit output that
+  never pushes or opens a PR.
+- **Reporting engine** (Phase 16) — `report.json` / `report.md` with
+  code-computed statistics (no LLM), text badges (`[VERIFIED]` / `[REPORTED]` /
+  `[HUMAN-CONFIRMED]`, no emoji), signed-bundle references for verified findings,
+  written `0600` at rest.
+
 ### Known limitations
 
+- **`scan` is not yet end-to-end.** `finlexpurple scan` performs scope
+  confirmation + authorization attestation → recon → the bounded orchestration
+  loop, but the detectors, verification engine, supply-chain, container, and
+  reporting modules are **not yet wired into the `scan` command**. A plain
+  `scan` therefore discovers endpoints but does **not** yet produce vulnerability
+  findings or a `report.json` / `report.md` file. Those modules are complete and
+  tested and are exercised directly / via their tests; connecting them to `scan`
+  is the next milestone. (Confirmed by running `scan` against a local target:
+  output ends with "orchestration complete … stub returned no findings" and
+  writes only `run-state.json` + `audit.jsonl`.)
 - **Default-on *dollar* spend cap is not yet enforced.** Of the §15 hardening
   defaults, the default-on **iteration / tool-call** cap
   (`orchestrator/iteration_limits.py`) and the **per-target request
@@ -16,6 +57,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dollar-spend-per-run** cap is **not** — it is finalized in Phase 20. Until
   then, bound a run's cost via the iteration/tool-call caps; do not rely on a
   dollar ceiling that does not yet exist.
+- **Air-gapped scanner feeds** — the wrapped scanners download/cache their own
+  vulnerability databases on first use; pre-fetched offline feed bundles are a
+  later deployment concern.
 
 ## [0.2.0a1] - 2026-10-20
 
