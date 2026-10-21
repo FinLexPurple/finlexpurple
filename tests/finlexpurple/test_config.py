@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -28,9 +29,17 @@ _VARIABLES = (
 
 
 @pytest.fixture(autouse=True)
-def clean_config_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+def clean_config_environment(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Isolate from the ambient config environment in two ways: clear any config
+    # variables that leak in from the shell, and run the test from an empty
+    # directory. The second matters because Config uses pydantic-settings'
+    # env_file=".env", which reads the *current directory's* .env — so without
+    # this, a .env in the repo root (created by `finlexpurple init`/`setup`)
+    # would bleed into these tests. Tests that need a .env create their own
+    # under tmp_path (now the cwd) and pass it explicitly.
     for name in _VARIABLES:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
 
 
 def test_loads_dotenv_from_explicit_current_directory(tmp_path) -> None:
