@@ -30,24 +30,26 @@ milestone. What works today:
 | Capability | Status |
 |---|---|
 | Hardware/provider setup, scope confirmation + authorization attestation | yes — works |
-| Recon / endpoint discovery (`scan` runs this) | yes — works |
-| Bounded, resumable orchestration loop with hardened defaults | yes — works |
-| Web detectors (SQLi/XSS/IDOR/SSRF…), MCP offensive testing | yes — module (tested, see note below) |
-| Deterministic verification engine (Phase 11) | yes — module (tested, see note below) |
-| Signed evidence bundle + standalone `verify-bundle` | yes — works |
-| Supply-chain (OSV/pip-audit wrap, slopsquat, typosquat, secrets) | yes — module (tested, see note below) |
-| Container (Trivy/Grype/Dockle/hadolint wrap, escape checks) | yes — module (tested, see note below) |
-| AST CodeFix (tree-sitter, JS/TS + Python) | yes — module (tested, see note below) |
-| Reporting engine (`report.json`/`report.md`, text badges, 0600) | yes — module (tested, see note below) |
+| `scan` end-to-end: recon → web detectors → verification → report | yes — works |
+| Web detectors (SQLi/XSS/IDOR/SSRF…) + deterministic verification | yes — runs in `scan` |
+| Signed evidence bundle + standalone `verify-bundle` | yes — works (`scan` writes a bundle per verified finding) |
+| MCP offensive testing | yes — module (runnable; not yet auto-run by `scan`) |
+| Supply-chain (OSV/pip-audit wrap, slopsquat, typosquat, secrets) | yes — module (`--include` wiring is a follow-up) |
+| Container (Trivy/Grype/Dockle/hadolint wrap, escape checks) | yes — module (`--include` wiring is a follow-up) |
+| AST CodeFix (tree-sitter, JS/TS + Python) | yes — module (whitebox `scan` flow is a follow-up) |
+| Reporting engine (`report.json`/`report.md`, text badges, 0600) | yes — runs in `scan` |
 
-**Not wired yet (important):** a single `finlexpurple scan` does **not** yet run
-the full pipeline end-to-end. Today `scan` performs scope confirmation → recon →
-the bounded orchestration loop, but the detectors, verifier, supply-chain,
-container, and reporting modules are **not yet connected to the `scan` command**,
-so a plain `scan` does **not** produce vulnerability findings or a `report.*`
-file yet. Those modules are complete and tested and are exercised directly /
-via their tests; the end-to-end `scan` wiring is the next milestone. See the
-[CHANGELOG](CHANGELOG.md) for the exact per-release status.
+**The web path is wired end-to-end.** `finlexpurple scan --target <url>` confirms
+scope + authorization, runs recon, runs the web detectors through a scope-safe
+prober, verifies each finding by deterministic replay, and writes a full report
+tree (`report.json`, `report.md`, `evidence/`, `replay-logs/`, and a signed
+bundle per verified finding) into `./finlexpurple-reports/<run>/`.
+
+**Still a follow-up:** the supply-chain and container surfaces (`--include
+supplychain|container`) and the whitebox CodeFix flow (`--path … --mode
+whitebox --fix-mode agent`) are complete, tested modules but are **not yet
+auto-run by `scan`** — run them via their module entry points for now. See the
+[CHANGELOG](CHANGELOG.md) for exact per-release status.
 
 This is a pre-release; the API, CLI flags, and output layout may change before
 1.0.
