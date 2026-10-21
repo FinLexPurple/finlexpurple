@@ -1,86 +1,141 @@
 # FinLexPurple
 
-Scan run state and reports are written under `finlexpurple-reports/`. This
-directory is gitignored and may contain local scan metadata; do not commit its
-contents. A run can be resumed with `finlexpurple scan --resume
-<path-to-run-state.json>` after confirming the same target scope.
+**A local, air-gapped-capable, hardened autonomous security agent that tests a
+financial application — and everything it now trusts.**
 
-Autonomous security testing agent — placeholder release to reserve the package name.
+A modern financial app is no longer just its own code and endpoints. It trusts
+AI agents and their MCP tool integrations, a tree of third-party software
+dependencies, and the container images it ships in. FinLexPurple's thesis is
+**one engagement, whole surface**: test the application *and* its AI/MCP
+integrations, its dependencies, and its containers together — with findings that
+are **deterministically verified** (re-executed by code, not asserted by an LLM)
+and **cryptographically provable** (a signed, reproducible evidence bundle per
+verified finding).
 
-Full release coming soon.
+> **AUTHORIZATION REQUIRED — this is an offensive security tool.** Only run
+> FinLexPurple against systems you own or have **explicit, written authorization**
+> to test. Unauthorized scanning may be illegal. The tool requires you to attest
+> authorization for each target (recorded in a tamper-evident audit log), runs
+> default-deny egress and spend/iteration caps, and never auto-exploits financial
+> or MCP actions without a human gate — but **you are responsible** for using it
+> lawfully.
 
-## Platform verification
+---
 
-Hardware detection has been manually verified on Linux/WSL and Windows.
-macOS has not been manually verified; Apple Silicon detection and unified
-memory tier boundaries are covered by synthetic unit tests.
+## Project status (honest)
 
-The local-8b-hybrid fallback wizard path and live provider calls have not
-been manually verified. Provider behavior and fallback configuration are
-covered by automated tests using synthetic hardware and mocked clients.
+FinLexPurple is in **active, pre-1.0 development**, released milestone by
+milestone. What works today:
 
-Phase 4 out-of-scope blocking is verified by unit tests only. There is no
-scanner yet to exercise that enforcement end to end.
+| Capability | Status |
+|---|---|
+| Hardware/provider setup, scope confirmation + authorization attestation | yes — works |
+| Recon / endpoint discovery (`scan` runs this) | yes — works |
+| Bounded, resumable orchestration loop with hardened defaults | yes — works |
+| Web detectors (SQLi/XSS/IDOR/SSRF…), MCP offensive testing | yes — module (tested, see note below) |
+| Deterministic verification engine (Phase 11) | yes — module (tested, see note below) |
+| Signed evidence bundle + standalone `verify-bundle` | yes — works |
+| Supply-chain (OSV/pip-audit wrap, slopsquat, typosquat, secrets) | yes — module (tested, see note below) |
+| Container (Trivy/Grype/Dockle/hadolint wrap, escape checks) | yes — module (tested, see note below) |
+| AST CodeFix (tree-sitter, JS/TS + Python) | yes — module (tested, see note below) |
+| Reporting engine (`report.json`/`report.md`, text badges, 0600) | yes — module (tested, see note below) |
 
-The Phase 5 crawler was manually verified on Linux/WSL against the local
-two-server demo site only. Windows and macOS rely on the automated CI matrix;
-the crawler has not been manually verified on those platforms. No real-world
-site was tested.
+**Not wired yet (important):** a single `finlexpurple scan` does **not** yet run
+the full pipeline end-to-end. Today `scan` performs scope confirmation → recon →
+the bounded orchestration loop, but the detectors, verifier, supply-chain,
+container, and reporting modules are **not yet connected to the `scan` command**,
+so a plain `scan` does **not** produce vulnerability findings or a `report.*`
+file yet. Those modules are complete and tested and are exercised directly /
+via their tests; the end-to-end `scan` wiring is the next milestone. See the
+[CHANGELOG](CHANGELOG.md) for the exact per-release status.
 
-## Hardware diagnostics
+This is a pre-release; the API, CLI flags, and output layout may change before
+1.0.
 
-Run `finlexpurple doctor` to print hardware facts. The command omits full
-filesystem paths and does not display configuration values or API keys. For
-a synthetic what-if report, pass a named profile, for example
-`finlexpurple doctor --fake-hardware-profile apple-16gb`. The same explicit
-override can exercise setup with
-`finlexpurple setup --fake-hardware-profile apple-16gb`; it does not alter
-hardware detection for normal runs. An unknown profile is rejected with the
-available profile names. The setup command still runs the regular persistence
-flow: it can create `.env`, and it asks before replacing existing selections.
+---
 
-The four hardware output fixtures under `tests/fixtures/hardware/` are
-synthetic. This environment has no `nvidia-smi`, `rocm-smi`, or
-`system_profiler`, and is not Windows; real samples are still needed from
-NVIDIA, AMD/ROCm, Apple Silicon, and Windows machines. The normal CI matrix
-also runs host detection and scripted setup directly against its real runner
-hardware, without replacing the detector.
+## Install
 
-Live hardware detection currently reads RAM with `os.sysconf` on Linux and
-macOS, replacing it with `sysctlbyname("hw.memsize")` for Apple Silicon; on
-Windows it uses `GlobalMemoryStatusEx`. GPU/VRAM detection currently uses
-`nvidia-smi` on Linux and Windows. The ROCm, `system_profiler`, and Windows
-video-controller parsers are tested against synthetic fixtures only and are
-not wired into live detection. Apple unified memory is read through `sysctl`,
-not the `system_profiler` parser.
+Requires Python 3.10+.
 
-The optional `Optional live provider smoke` workflow makes one small request
-only when manually dispatched with a provider whose repository secret is
-configured. It skips cleanly when that provider key is absent and never
-prints the key or response text.
-
-## Manual recon scope check
-
-In one terminal, start the controlled two-server test site:
-
-```sh
-python scripts/recon_demo_site.py
+```bash
+pip install finlexpurple
 ```
 
-It prints the in-scope URL and starts an out-of-scope redirect canary on a
-different port. In a second terminal, run the URL shown by the first command:
+Some capabilities **wrap best-of-breed open-source scanners** rather than
+reimplementing them. Install the ones you need and check availability with
+`finlexpurple doctor --tools`:
 
-```sh
-finlexpurple scan --target http://127.0.0.1:8765/
+- Supply-chain: [osv-scanner](https://google.github.io/osv-scanner/), [pip-audit](https://pypi.org/project/pip-audit/)
+- Container: [Trivy](https://trivy.dev/), [Grype](https://github.com/anchore/grype), [Dockle](https://github.com/goodwithtech/dockle), [hadolint](https://github.com/hadolint/hadolint)
+- Evidence signing: [cosign](https://docs.sigstore.dev/cosign/) (optional; bundles are hash-only without it)
+- Container isolation: Docker (Standard tier)
+
+Missing tools are reported clearly and their steps are **skipped**, never faked.
+
+## Usage
+
+```bash
+# 1. See your hardware and which external scanners are installed
+finlexpurple doctor
+finlexpurple doctor --tools
+
+# 2. Configure model provider / hardware tier, and the container-isolation tier
+finlexpurple setup
+finlexpurple setup-isolation
+finlexpurple init                 # create a local .env from the template
+
+# 3. Scan a target you are authorized to test (confirms scope + attestation,
+#    then recon + the orchestration loop). You will be asked to confirm scope.
+finlexpurple scan --target https://app.example.com/
+finlexpurple scan --target 10.0.0.0/24 --root-url http://10.0.0.5/   # IP/CIDR
+finlexpurple resume <run-id>      # resume a paused run
+
+# 4. Independently re-verify a finding's evidence bundle — offline, standalone
+finlexpurple verify-bundle ./finlexpurple-reports/<run>/evidence/<id>.bundle.json
 ```
 
-Confirm the target when prompted. The catalog should list the root, `/about`,
-`/search`, `/private`, `/redirect`, and a `POST /submit` form entry. The form
-must not be submitted. The default run records `/private` from robots.txt but
-still fetches it. Repeat with `--respect-robots`; `/private` should then be
-absent from the catalog. In the first terminal, `OUT_OF_SCOPE_REQUEST` must
-never appear in either run. Query values such as `demo-secret` must not appear
-in CLI output or application logs. Stop the servers with Ctrl+C.
+Run state and reports are written under `./finlexpurple-reports/` (gitignored;
+reports are `0600` on POSIX because they contain real vulnerability detail).
+
+### The verify-bundle flow (the credibility differentiator)
+
+A verified finding is backed by a reproducible **evidence bundle**: the exact
+request/response, the deterministic replay log, and a canonical content hash
+(and, when cosign is available and you are online, a Sigstore signature). Anyone
+— an auditor, a client, a regulator — can re-check it on their own machine, with
+**no scan and no network**:
+
+```bash
+finlexpurple verify-bundle finding.bundle.json
+finlexpurple verify-bundle finding.bundle.json --expected-hash sha256:<from-the-report>
+```
+
+It recomputes the hash and reports tampering clearly; a bundle altered after
+creation fails verification.
+
+## What makes it different
+
+1. **Deterministic exploit verifier** — findings are re-executed by code, never trusted on an LLM's say-so.
+2. **Local / air-gapped / bring-your-own-model** — runs fully local via Ollama; cloud providers optional.
+3. **AI-agent / MCP offensive testing** — active prompt-injection, tool-poisoning, exfiltration-oracle testing (hard-gated).
+4. **Hardened by default** — default-deny egress, spend/iteration caps, never mounts the Docker socket, never privileged.
+5. **Fintech business-logic specialization** — a suite of financial-domain agents (later milestone).
+6. **Slopsquatting / hallucinated-dependency detection** — catches packages an AI coding agent might invent or that were attacker-registered.
+7. **Payment-SDK typosquat detection** — fake Stripe/JazzCash/Easypaisa/Paysafe-style packages.
+8. **Privacy-by-architecture install counter** — opt-in, cannot identify you.
+9. **Three-state verified badge + aggregate "% verified"** — `[VERIFIED]` / `[REPORTED]` / `[HUMAN-CONFIRMED]`, as plain text (no emoji).
+10. **One engagement, whole surface** — app + AI/MCP + dependencies + containers, not four-to-six stitched-together tools.
+11. **Reproducible, signed evidence bundle per finding** — independently re-verifiable.
+12. **Tiered container isolation** — the scan runs inside a hardened boundary (None / Standard-Docker / Maximum-gVisor).
+
+Where mature OSS scanners exist, FinLexPurple **wraps** them (Trivy, Grype,
+OSV-Scanner, pip-audit, mcp-scan, hadolint, Dockle) and normalizes their real
+output into one finding schema — it does not reimplement their databases.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests welcome.
 
 ## License
 
