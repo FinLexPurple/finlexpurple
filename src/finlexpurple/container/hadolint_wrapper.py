@@ -98,4 +98,11 @@ def run_hadolint(
     # hadolint exits 1 when it reports lint messages; JSON is still on stdout.
     if returncode not in (0, 1):
         raise HadolintError(f"hadolint failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON (at least "[]"); empty output means the
+    # tool failed, and a scan must never silently report "clean" from a failure.
+    if not stdout.strip():
+        raise HadolintError(
+            f"hadolint produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_hadolint_output(stdout, agent=agent)

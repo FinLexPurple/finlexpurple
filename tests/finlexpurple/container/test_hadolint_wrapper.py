@@ -56,3 +56,8 @@ def test_dockerfile_path_is_passed_absolute() -> None:
 
     run_hadolint(Path("Dockerfile"), runner=runner)
     assert captured["args"][-1] == str(Path("Dockerfile").resolve())
+
+
+def test_empty_output_is_an_error_not_clean() -> None:
+    with pytest.raises(HadolintError):
+        run_hadolint(Path("Dockerfile"), runner=lambda args: (1, "", "hadolint: boom"))

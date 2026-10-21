@@ -89,3 +89,8 @@ def test_requirements_path_is_passed_absolute() -> None:
 
     run_pip_audit(Path("requirements.txt"), runner=runner)
     assert captured["args"][-1] == str(Path("requirements.txt").resolve())
+
+
+def test_empty_output_is_an_error_not_clean() -> None:
+    with pytest.raises(PipAuditError):
+        run_pip_audit(Path("requirements.txt"), runner=lambda args: (1, "", "pip-audit: boom"))

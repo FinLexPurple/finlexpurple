@@ -48,3 +48,8 @@ def test_empty_and_invalid() -> None:
 
 def test_run_with_injected_runner() -> None:
     assert len(run_grype("debian:10", runner=lambda args: (0, _GRYPE_JSON, ""))) == 1
+
+
+def test_empty_output_is_an_error_not_clean() -> None:
+    with pytest.raises(GrypeError):
+        run_grype("img", runner=lambda args: (0, "", "grype: boom"))

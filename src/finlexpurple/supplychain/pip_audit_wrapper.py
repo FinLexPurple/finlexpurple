@@ -106,4 +106,11 @@ def run_pip_audit(
     # pip-audit exits non-zero when vulnerabilities are found; JSON still comes on stdout.
     if returncode not in (0, 1):
         raise PipAuditError(f"pip-audit failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON; empty output means the tool failed, and
+    # a security scan must never silently report "clean" from a failed run.
+    if not stdout.strip():
+        raise PipAuditError(
+            f"pip-audit produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_pip_audit_output(stdout, agent=agent)

@@ -97,4 +97,11 @@ def run_dockle(
     # dockle exits non-zero when it finds FATAL/WARN issues; JSON is still on stdout.
     if returncode not in (0, 1):
         raise DockleError(f"dockle failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON; empty output means the tool failed, and
+    # a security scan must never silently report "clean" from a failed run.
+    if not stdout.strip():
+        raise DockleError(
+            f"dockle produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_dockle_output(stdout, agent=agent)

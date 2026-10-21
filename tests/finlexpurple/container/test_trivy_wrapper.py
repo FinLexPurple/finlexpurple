@@ -66,3 +66,10 @@ def test_run_with_injected_runner() -> None:
 def test_run_error_exit_raises() -> None:
     with pytest.raises(TrivyError):
         run_trivy("debian:10", runner=lambda args: (2, "", "trivy: fatal"))
+
+
+def test_empty_output_is_an_error_not_clean() -> None:
+    # Regression: a trivy failure with empty stdout must raise, never be parsed
+    # as 0 findings / clean (critical for a security scanner).
+    with pytest.raises(TrivyError):
+        run_trivy("img", runner=lambda args: (0, "", "FATAL: unable to initialize DB"))

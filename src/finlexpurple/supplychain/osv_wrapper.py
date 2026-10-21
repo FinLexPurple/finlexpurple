@@ -130,20 +130,23 @@ def _group_max_severity(groups: object) -> str | None:
 def run_osv_scanner(
     project_path: Path,
     *,
-    offline: bool = False,
     tool: ExternalTool | None = None,
     runner: ScannerRunner | None = None,
     timeout: float = 300,
     agent: str = "supplychain",
 ) -> list[Finding]:
-    """Run osv-scanner over a project tree and return normalized findings (or [])."""
+    """Run osv-scanner over a project tree and return normalized findings (or []).
+
+    osv-scanner manages its own OSV database: it downloads it when absent and
+    caches it afterwards, so a first run works. (Air-gapped pre-fetched feed
+    bundles are a deployment concern, decisions.md §18 item 9, not yet wired —
+    we do not pass ``--offline-vulnerabilities``, which crashes when no local DB
+    exists.)
+    """
 
     # Absolute path: the hardened sandbox runs in an isolated temp cwd, so a
     # relative path would not resolve and the scan would silently find nothing.
     args: list[str] = ["--format", "json", "--recursive", str(Path(project_path).resolve())]
-    if offline:
-        # Use OSV's local database so an air-gapped run uses the last-refreshed feed.
-        args.insert(0, "--offline-vulnerabilities")
     if runner is not None:
         returncode, stdout, stderr = runner(args)
     else:
@@ -158,4 +161,11 @@ def run_osv_scanner(
     # osv-scanner exits 1 when vulnerabilities are found; 0 when none. Other = error.
     if returncode not in (0, 1):
         raise OSVScannerError(f"osv-scanner failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON; empty output means the tool failed, and
+    # a security scan must never silently report "clean" from a failed run.
+    if not stdout.strip():
+        raise OSVScannerError(
+            f"osv-scanner produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_osv_output(stdout, agent=agent)

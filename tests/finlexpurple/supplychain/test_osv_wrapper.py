@@ -96,7 +96,17 @@ def test_project_path_is_passed_absolute() -> None:
 
     def runner(args: object) -> tuple[int, str, str]:
         captured["args"] = [str(a) for a in args]  # type: ignore[arg-type]
-        return (0, "", "")
+        return (0, '{"results":[]}', "")  # non-empty: a real clean run emits JSON
 
     run_osv_scanner(project_path=Path("."), runner=runner)
     assert str(Path.cwd()) in captured["args"]  # Path(".").resolve() == cwd
+
+
+def test_empty_output_on_findings_exit_is_an_error_not_clean() -> None:
+    # Regression: exit 1 (osv's "vulns found") with empty stdout means the tool
+    # actually failed — it must raise, never be parsed as 0 findings / clean.
+    with pytest.raises(OSVScannerError):
+        run_osv_scanner(
+            project_path=__import__("pathlib").Path("."),
+            runner=lambda args: (1, "", "could not load db for PyPI ecosystem"),
+        )

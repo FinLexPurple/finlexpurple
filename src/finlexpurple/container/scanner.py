@@ -85,13 +85,14 @@ def scan_container(
 
     findings: list[Finding] = []
     warnings: list[str] = []
-    offline = mode is ScanMode.OFFLINE
 
     if image is not None:
+        # Wrapped scanners manage their own vuln DB (download when absent); ``mode``
+        # labels the offline-awareness of our own checks, not the scanners' DB.
         if trivy_runner is None and not TOOL_REGISTRY["trivy"].is_installed():
             warnings.append("trivy not installed; Trivy image scan skipped.")
         else:
-            findings.extend(trivy_wrapper.run_trivy(image, offline=offline, runner=trivy_runner))
+            findings.extend(trivy_wrapper.run_trivy(image, runner=trivy_runner))
         if grype_runner is None and not TOOL_REGISTRY["grype"].is_installed():
             warnings.append("grype not installed; Grype image scan skipped.")
         else:

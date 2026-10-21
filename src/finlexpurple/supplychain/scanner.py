@@ -104,12 +104,13 @@ def scan_supplychain(
     findings: list[Finding] = []
     warnings: list[str] = []
 
-    offline = mode is ScanMode.OFFLINE
     # Wrapped scanners (real exit/JSON parsed into Findings; skipped if absent).
+    # They manage their own vuln DB (download when absent); ``mode`` labels the
+    # slopsquat/typosquat findings, not the scanners' DB behavior.
     if osv_runner is None and not TOOL_REGISTRY["osv-scanner"].is_installed():
         warnings.append("osv-scanner not installed; OSV dependency scan skipped.")
     else:
-        findings.extend(run_osv_scanner(project_path, offline=offline, runner=osv_runner))
+        findings.extend(run_osv_scanner(project_path, runner=osv_runner))
 
     requirements = project_path / "requirements.txt"
     if pip_audit_runner is None and not TOOL_REGISTRY["pip-audit"].is_installed():

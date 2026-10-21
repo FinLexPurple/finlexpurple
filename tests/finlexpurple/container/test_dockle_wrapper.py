@@ -41,3 +41,8 @@ def test_invalid_and_run() -> None:
     with pytest.raises(DockleError):
         parse_dockle_output(json.dumps({"no": "details"}))
     assert len(run_dockle("img", runner=lambda args: (1, _DOCKLE_JSON, ""))) == 2
+
+
+def test_empty_output_is_an_error_not_clean() -> None:
+    with pytest.raises(DockleError):
+        run_dockle("img", runner=lambda args: (1, "", "dockle: boom"))

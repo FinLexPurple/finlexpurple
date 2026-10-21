@@ -102,4 +102,11 @@ def run_grype(
         returncode, stdout, stderr = res.returncode or 0, res.stdout, res.stderr
     if returncode != 0:
         raise GrypeError(f"grype failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON; empty output means the tool failed, and
+    # a security scan must never silently report "clean" from a failed run.
+    if not stdout.strip():
+        raise GrypeError(
+            f"grype produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_grype_output(stdout, agent=agent)

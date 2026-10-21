@@ -83,19 +83,21 @@ def parse_trivy_output(raw: str, *, agent: str = "container") -> list[Finding]:
 def run_trivy(
     image: str,
     *,
-    offline: bool = False,
     tool: ExternalTool | None = None,
     runner: ScannerRunner | None = None,
     timeout: float = 600,
     agent: str = "container",
 ) -> list[Finding]:
-    """Scan a container image with trivy and return normalized findings (or [])."""
+    """Scan a container image with trivy and return normalized findings (or []).
 
-    args: list[str] = ["image", "--format", "json", "--quiet"]
-    if offline:
-        # Use the last-downloaded DB so an air-gapped run uses the current feed (§25).
-        args += ["--skip-db-update", "--offline-scan"]
-    args.append(image)
+    trivy manages its own vulnerability DB: it downloads it when absent and
+    caches it afterwards, so a first run works. (Air-gapped pre-fetched DB
+    bundles are a deployment concern, decisions.md §18 item 9, not yet wired —
+    we do not pass ``--skip-db-update``, which crashes on first run when no DB
+    exists yet.)
+    """
+
+    args: list[str] = ["image", "--format", "json", "--quiet", image]
     if runner is not None:
         returncode, stdout, stderr = runner(args)
     else:
@@ -109,4 +111,11 @@ def run_trivy(
         returncode, stdout, stderr = res.returncode or 0, res.stdout, res.stderr
     if returncode != 0:
         raise TrivyError(f"trivy failed (exit {returncode}): {stderr.strip()[:500]}")
+    # A successful run always emits JSON; empty output means the tool failed, and
+    # a security scan must never silently report "clean" from a failed run.
+    if not stdout.strip():
+        raise TrivyError(
+            f"trivy produced no output (exit {returncode}); refusing to report a clean "
+            f"result from a failed run. stderr: {stderr.strip()[:500]}"
+        )
     return parse_trivy_output(stdout, agent=agent)
