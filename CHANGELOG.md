@@ -5,6 +5,18 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Known limitations
+
+- **Default-on *dollar* spend cap is not yet enforced.** Of the §15 hardening
+  defaults, the default-on **iteration / tool-call** cap
+  (`orchestrator/iteration_limits.py`) and the **per-target request
+  kill-ceiling** (`security/budget.py`) are enforced today, but the **maximum
+  dollar-spend-per-run** cap is **not** — it is finalized in Phase 20. Until
+  then, bound a run's cost via the iteration/tool-call caps; do not rely on a
+  dollar ceiling that does not yet exist.
+
 ## [0.2.0a1] - 2026-10-20
 
 Milestone M2 (Phases 7–10). This is an **alpha**: it adds the detection and
