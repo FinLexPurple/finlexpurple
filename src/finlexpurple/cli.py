@@ -353,30 +353,30 @@ def scan(
 
 @telemetry_app.command()
 def show() -> None:
-    """Show telemetry settings (implemented in Phase 14)."""
+    """Show telemetry settings (implemented in Phase 17)."""
 
-    _stub("telemetry show", 14)
+    _stub("telemetry show", 17)
 
 
 @telemetry_app.command()
 def on() -> None:
-    """Enable telemetry (implemented in Phase 14)."""
+    """Enable telemetry (implemented in Phase 17)."""
 
-    _stub("telemetry on", 14)
+    _stub("telemetry on", 17)
 
 
 @telemetry_app.command()
 def off() -> None:
-    """Disable telemetry (implemented in Phase 14)."""
+    """Disable telemetry (implemented in Phase 17)."""
 
-    _stub("telemetry off", 14)
+    _stub("telemetry off", 17)
 
 
 @app.command()
 def feedback() -> None:
-    """Submit run feedback (implemented in Phase 14)."""
+    """Submit run feedback (implemented in Phase 17)."""
 
-    _stub("feedback", 14)
+    _stub("feedback", 17)
 
 
 @app.command(name="setup-isolation")

@@ -1,1 +1,1 @@
-"""Deterministic finding verification is added in Phase 10."""
+"""Deterministic finding verification (Phase 11)."""

@@ -1,1 +1,1 @@
-"""Vulnerability detectors are added in Phase 8."""
+"""Vulnerability detectors (Phase 10; the shared Finding schema lands in Phase 7)."""

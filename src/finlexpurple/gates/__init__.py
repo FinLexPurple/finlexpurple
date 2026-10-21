@@ -1,1 +1,1 @@
-"""Human-approval gates are added in Phase 11."""
+"""Human-approval gates (Phase 8)."""

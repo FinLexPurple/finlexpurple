@@ -51,10 +51,10 @@ def test_version_prints_current_version() -> None:
 
 def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
     commands = {
-        "telemetry show": "Phase 14",
-        "telemetry on": "Phase 14",
-        "telemetry off": "Phase 14",
-        "feedback": "Phase 14",
+        "telemetry show": "Phase 17",
+        "telemetry on": "Phase 17",
+        "telemetry off": "Phase 17",
+        "feedback": "Phase 17",
     }
     for command, phase in commands.items():
         result = runner.invoke(app, command.split())
