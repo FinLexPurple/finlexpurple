@@ -40,16 +40,17 @@ see **Known limitations** for how they are (and are not yet) reachable.
 
 ### Known limitations
 
-- **`scan` is not yet end-to-end.** `finlexpurple scan` performs scope
-  confirmation + authorization attestation → recon → the bounded orchestration
-  loop, but the detectors, verification engine, supply-chain, container, and
-  reporting modules are **not yet wired into the `scan` command**. A plain
-  `scan` therefore discovers endpoints but does **not** yet produce vulnerability
-  findings or a `report.json` / `report.md` file. Those modules are complete and
-  tested and are exercised directly / via their tests; connecting them to `scan`
-  is the next milestone. (Confirmed by running `scan` against a local target:
-  output ends with "orchestration complete … stub returned no findings" and
-  writes only `run-state.json` + `audit.jsonl`.)
+- **`scan` web path is end-to-end; other surfaces are not auto-run yet.**
+  `finlexpurple scan --target <url>` now runs the full web path — scope
+  confirmation + authorization attestation → recon → web detectors (through a
+  scope-safe, egress-checked, kill-ceiling-capped prober) → deterministic
+  verification → a written report tree (`report.json`, `report.md`, `evidence/`,
+  `replay-logs/`, and a signed bundle per verified finding). (Confirmed against a
+  deliberately vulnerable local target: 8 findings, 2 verified — SQLi reproduced
+  and SSRF confirmed by out-of-band canary.) **Not yet auto-run by `scan`:** the
+  supply-chain and container surfaces (`--include supplychain|container`) and the
+  whitebox CodeFix flow (`--path … --mode whitebox`); those modules are complete
+  and tested and are run via their module entry points for now.
 - **Default-on *dollar* spend cap is not yet enforced.** Of the §15 hardening
   defaults, the default-on **iteration / tool-call** cap
   (`orchestrator/iteration_limits.py`) and the **per-target request
