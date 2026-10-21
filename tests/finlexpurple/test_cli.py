@@ -125,7 +125,7 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     monkeypatch.setattr("finlexpurple.cli.configure_logging", lambda json_logs=False: seen.append(json_logs))
     monkeypatch.setattr("finlexpurple.cli.run_setup", lambda fake_hardware_profile=None: True)
     monkeypatch.setattr(
-        "finlexpurple.cli.confirm_scope", lambda target: SimpleNamespace(first_confirmed_at=None)
+        "finlexpurple.cli.confirm_scope", lambda target, **kwargs: SimpleNamespace(first_confirmed_at=None)
     )
     monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
 
@@ -222,17 +222,21 @@ def test_scan_confirms_scope_then_runs_recon_stage(tmp_path, monkeypatch) -> Non
     assert len(list((tmp_path / "user-config").glob("*.json"))) == 1
 
 
-def test_scan_uses_cached_confirmation_without_prompting_again(tmp_path, monkeypatch) -> None:
+def test_scan_reconfirms_authorization_every_run(tmp_path, monkeypatch) -> None:
+    # A fresh scan re-attests authorization on every run (it does not silently
+    # reuse a globally-cached confirmation), so the second run prompts again.
     monkeypatch.setattr(
         "finlexpurple.scope.confirm.user_config_directory", lambda: tmp_path / "user-config"
     )
     monkeypatch.setattr("finlexpurple.cli.run_recon", lambda *args, **kwargs: stub_recon_result())
     first = runner.invoke(app, ["scan", "--target", "https://example.com/"], input="y\n")
-    second = runner.invoke(app, ["scan", "--target", "https://example.com:443/"])
+    # Same target, a second run: it must prompt again rather than skip on cache.
+    second = runner.invoke(app, ["scan", "--target", "https://example.com:443/"], input="y\n")
 
     assert first.exit_code == 0, strip_ansi(first.output)
     assert second.exit_code == 0, strip_ansi(second.output)
-    assert "Scope already confirmed" in strip_ansi(second.output)
+    assert "Do you confirm that you are authorized" in strip_ansi(second.output)
+    assert "Scope already confirmed" not in strip_ansi(second.output)
 
 
 def test_scan_decline_stops_before_starting_or_caching(tmp_path, monkeypatch) -> None:

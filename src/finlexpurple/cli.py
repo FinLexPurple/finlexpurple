@@ -382,7 +382,9 @@ def scan(
         typer.echo("--root-url is only valid with an IP/CIDR --target.", err=True)
         raise typer.Exit(code=2)
     try:
-        confirmed_scope = confirm_scope(normalized_target)
+        # A fresh scan re-confirms authorization every run (fresh attestation),
+        # rather than silently reusing a globally-cached confirmation.
+        confirmed_scope = confirm_scope(normalized_target, force=True)
     except ScopeStorageError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from None

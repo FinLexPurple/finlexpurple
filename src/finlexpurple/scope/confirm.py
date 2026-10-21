@@ -95,16 +95,25 @@ def confirm_scope(
     target: Target,
     *,
     cache_directory: Path | None = None,
+    force: bool = False,
 ) -> ScopeDefinition | None:
-    """Require explicit confirmation once for a canonical target and scope."""
+    """Confirm a target's scope, prompting unless a prior confirmation applies.
 
-    cached = _load_cached_scope(target, cache_directory)
-    if cached is not None:
-        confirmed_at = cached.first_confirmed_at
-        if confirmed_at is not None:
-            typer.echo(f"Scope already confirmed: {_display_target(target)}")
-            typer.echo(f"First confirmed at: {confirmed_at.isoformat()}")
-            return cached
+    ``force=True`` always re-prompts and records a fresh confirmation, even if a
+    prior one is cached — a fresh ``scan`` re-attests authorization on every run
+    (the attestation timestamp in the audit log is then this run's, not a stale
+    cached one). ``force=False`` (the default, used by ``resume``) reuses a valid
+    cached confirmation without re-prompting so an in-progress run continues.
+    """
+
+    if not force:
+        cached = _load_cached_scope(target, cache_directory)
+        if cached is not None:
+            confirmed_at = cached.first_confirmed_at
+            if confirmed_at is not None:
+                typer.echo(f"Scope already confirmed: {_display_target(target)}")
+                typer.echo(f"First confirmed at: {confirmed_at.isoformat()}")
+                return cached
 
     typer.echo(f"Resolved target: {_display_target(target)}")
     if target.kind == "url":
