@@ -1,11 +1,35 @@
 [project]
 name = "finlexpurple"
 version = "0.2.0a1"
-description = "Autonomous security testing agent (placeholder release)"
+description = "Local, hardened autonomous security agent that tests a financial app and everything it trusts — AI/MCP, dependencies, and containers — with deterministically verified, cryptographically provable findings."
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [{ name = "FinLexPurple" }]
+keywords = [
+    "security",
+    "pentest",
+    "sast",
+    "supply-chain",
+    "container-security",
+    "mcp",
+    "fintech",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
+
 dependencies = [
     "typer>=0.12",
     "python-dotenv>=1.0",
@@ -22,6 +46,12 @@ dependencies = [
     "tree-sitter-javascript>=0.23",
     "tree-sitter-typescript>=0.23",
 ]
+
+[project.urls]
+Homepage = "https://github.com/FinLexPurple/finlexpurple"
+Repository = "https://github.com/FinLexPurple/finlexpurple"
+Changelog = "https://github.com/FinLexPurple/finlexpurple/blob/main/CHANGELOG.md"
+Issues = "https://github.com/FinLexPurple/finlexpurple/issues"
 
 [project.optional-dependencies]
 dev = [
