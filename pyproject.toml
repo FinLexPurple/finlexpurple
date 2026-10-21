@@ -1,6 +1,6 @@
 [project]
 name = "finlexpurple"
-version = "0.3.0b1"
+version = "0.3.0"
 description = "Local, hardened autonomous security agent that tests a financial app and everything it trusts — AI/MCP, dependencies, and containers — with deterministically verified, cryptographically provable findings."
 readme = "README.md"
 license = "Apache-2.0"
