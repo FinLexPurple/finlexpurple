@@ -19,6 +19,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import yaml  # type: ignore[import-untyped]  # declared dependency (pyproject)
+
 from finlexpurple.container import (
     dockle_wrapper,
     escape_checks,
@@ -48,13 +50,13 @@ class ContainerResult:
 
 
 def _load_compose(path: Path, warnings: list[str]) -> dict | None:
-    """Parse a compose file if PyYAML is available; warn (not fail) otherwise."""
+    """Parse a compose file (PyYAML is a declared dependency).
 
-    try:
-        import yaml  # type: ignore[import-untyped]  # PyYAML optional; guarded, no hard dep
-    except ImportError:
-        warnings.append("PyYAML not available; docker-compose escape checks skipped.")
-        return None
+    The compose escape checks are a security check, so PyYAML is a hard
+    dependency rather than an optional import that would silently disable them;
+    only a genuine parse error (not a missing parser) is downgraded to a warning.
+    """
+
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as exc:
