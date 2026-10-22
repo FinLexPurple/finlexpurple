@@ -11,6 +11,8 @@ Milestone M3 (Phases 11–16). This milestone adds deterministic verification an
 the capabilities built on it. Every module below is implemented and tested;
 see **Known limitations** for how they are (and are not yet) reachable.
 
+Release report (real demo result + CI + PyPI link): [docs/releases/0.3.0.md](docs/releases/0.3.0.md).
+
 ### Added
 
 - **Deterministic verification engine** (Phase 11) — re-executes a finding by

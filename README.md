@@ -54,6 +54,10 @@ auto-run by `scan`** — run them via their module entry points for now. See the
 This is a pre-release; the API, CLI flags, and output layout may change before
 1.0.
 
+**Latest release:** [0.3.0 release report](docs/releases/0.3.0.md) — the M3
+milestone, with the real end-to-end demo result (4 verified findings) and CI
+status. See the [CHANGELOG](CHANGELOG.md) for full per-release detail.
+
 ---
 
 ## Install
