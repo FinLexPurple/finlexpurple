@@ -58,6 +58,9 @@ class Config(BaseSettings):
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     require_human_approval: bool = Field(default=True, validation_alias="REQUIRE_HUMAN_APPROVAL")
     telemetry_enabled: bool = Field(default=False, validation_alias="TELEMETRY_ENABLED")
+    # Where opt-in telemetry is sent. Deliberately not defaulted to a live URL:
+    # the receiving endpoint lives in the separate webapp repo (decisions.md §22).
+    telemetry_endpoint: str | None = Field(default=None, validation_alias="TELEMETRY_ENDPOINT")
     model_tier: ModelTier | None = Field(default=None, validation_alias="MODEL_TIER")
 
     @field_validator("llm_provider", mode="before")
@@ -165,6 +168,7 @@ class Config(BaseSettings):
             "GEMINI_API_KEY",
             "REQUIRE_HUMAN_APPROVAL",
             "TELEMETRY_ENABLED",
+            "TELEMETRY_ENDPOINT",
             "MODEL_TIER",
         }
         for name in config_names:
