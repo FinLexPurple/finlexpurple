@@ -1,1 +1,1 @@
-"""Telemetry tests are added in Phase 14."""
+"""Telemetry and install-counter tests (Phase 17)."""
