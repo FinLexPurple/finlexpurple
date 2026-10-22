@@ -49,21 +49,6 @@ def test_version_prints_current_version() -> None:
     assert strip_ansi(result.stdout).strip() == __version__
 
 
-def test_non_scan_stubs_exit_successfully_with_phase_message() -> None:
-    commands = {
-        "telemetry show": "Phase 17",
-        "telemetry on": "Phase 17",
-        "telemetry off": "Phase 17",
-        "feedback": "Phase 17",
-    }
-    for command, phase in commands.items():
-        result = runner.invoke(app, command.split())
-        output = strip_ansi(result.stdout)
-        assert result.exit_code == 0, (command, result.exception)
-        assert "is not yet implemented" in output
-        assert phase in output
-
-
 def test_setup_runs_phase_two_wizard(monkeypatch) -> None:
     called: list[bool] = []
     monkeypatch.setattr(
@@ -133,13 +118,12 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
         ["setup"],
         ["scan", "--target", "https://example.com/"],
         ["telemetry", "show"],
-        ["feedback"],
     )
     for command in commands:
         result = runner.invoke(app, ["--json-logs", *command])
         assert result.exit_code == 0
 
-    assert seen == [True, True, True, True]
+    assert seen == [True, True, True]
 
 
 def test_scan_requires_target_option() -> None:

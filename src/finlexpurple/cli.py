@@ -50,6 +50,11 @@ from finlexpurple.security.budget import RateLimiter, RequestBudget
 from finlexpurple.security.egress_policy import EgressPolicy
 from finlexpurple.security.isolation import IsolationTier
 from finlexpurple.security.safe_failure import SafeFailureController
+from finlexpurple.telemetry import cli_commands as telemetry_cli
+from finlexpurple.telemetry import collector as telemetry_collector
+from finlexpurple.telemetry import feedback as telemetry_feedback
+from finlexpurple.telemetry import sender as telemetry_sender
+from finlexpurple.telemetry.install_counter import get_or_create_install_id
 from finlexpurple.tools.installed_check import check_tools, format_tool_report
 from finlexpurple.verifier.replay.canary import HttpCanary
 
@@ -80,10 +85,6 @@ def root_callback(
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
-
-
-def _stub(command: str, phase: int) -> None:
-    typer.echo(f"{command} is not yet implemented (lands in Phase {phase})")
 
 
 def _load_and_validate_resume(state_path: Path) -> tuple[RunState, Target]:
@@ -432,32 +433,78 @@ def scan(
     )
 
 
+def _telemetry_config() -> Config:
+    """Load config for the telemetry commands, tolerant of LLM-provider misconfig.
+
+    Telemetry does not depend on the model provider, so a provider configuration
+    error must not break `telemetry`/`feedback`. Fall back to reading just the
+    telemetry settings from the environment (``.env`` is already loaded by
+    ``Config.load`` before it raises).
+    """
+
+    try:
+        return Config.load()
+    except ConfigurationError:
+        enabled = os.environ.get("TELEMETRY_ENABLED", "").strip().lower() in {"true", "1", "yes", "on"}
+        endpoint = os.environ.get("TELEMETRY_ENDPOINT") or None
+        return Config.model_construct(telemetry_enabled=enabled, telemetry_endpoint=endpoint)
+
+
 @telemetry_app.command()
 def show() -> None:
-    """Show telemetry settings (implemented in Phase 17)."""
+    """Show telemetry state and exactly what would be sent (opt-in; off by default)."""
 
-    _stub("telemetry show", 17)
+    typer.echo(
+        telemetry_cli.describe_telemetry(_telemetry_config(), install_id=get_or_create_install_id())
+    )
 
 
 @telemetry_app.command()
 def on() -> None:
-    """Enable telemetry (implemented in Phase 17)."""
+    """Opt in to telemetry (writes TELEMETRY_ENABLED=true to ./.env)."""
 
-    _stub("telemetry on", 17)
+    typer.echo(telemetry_cli.enable_telemetry(Path.cwd() / ".env"))
 
 
 @telemetry_app.command()
 def off() -> None:
-    """Disable telemetry (implemented in Phase 17)."""
+    """Opt out of telemetry (writes TELEMETRY_ENABLED=false to ./.env)."""
 
-    _stub("telemetry off", 17)
+    typer.echo(telemetry_cli.disable_telemetry(Path.cwd() / ".env"))
 
 
 @app.command()
-def feedback() -> None:
-    """Submit run feedback (implemented in Phase 17)."""
+def feedback(
+    run: Annotated[str, typer.Option("--run", help="Run id (directory under finlexpurple-reports/).")],
+    rating: Annotated[
+        str | None, typer.Option("--rating", help="Rate the run: good | ok | bad.")
+    ] = None,
+    finding: Annotated[
+        str | None, typer.Option("--finding", help="Finding id to flag.")
+    ] = None,
+    mark: Annotated[
+        str | None,
+        typer.Option("--mark", help="Flag the finding: true-positive | false-positive."),
+    ] = None,
+) -> None:
+    """Record run/finding feedback locally; send an allow-listed payload only if telemetry is on."""
 
-    _stub("feedback", 17)
+    try:
+        entry = telemetry_feedback.record_feedback(
+            run_id=run, rating=rating, finding_id=finding, mark=mark
+        )
+    except telemetry_feedback.FeedbackError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+    typer.echo(f"Feedback recorded locally for run {run}.")
+    # Build an allow-listed payload (no run/finding id) and send only if enabled.
+    payload = telemetry_collector.build_feedback_payload(
+        run_rating=entry["rating"],
+        finding_mark=entry["mark"],
+        vulnerability_class=entry["vulnerability_class"],
+    )
+    result = telemetry_sender.send(payload, config=_telemetry_config())
+    typer.echo(result.reason)
 
 
 @app.command(name="setup-isolation")
