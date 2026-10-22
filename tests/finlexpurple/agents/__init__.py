@@ -1,1 +1,1 @@
-"""Agent tests are added in Phase 16."""
+"""Named-agent registry and invocation tests (Phase 18)."""
