@@ -8,5 +8,7 @@ venv/
 .env
 .vscode/
 .DS_Store
-docs/
+# Private spec docs stay ignored; public release reports (docs/releases/) are tracked.
+docs/*
+!docs/releases/
 finlexpurple-reports/
