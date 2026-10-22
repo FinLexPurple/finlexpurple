@@ -14,6 +14,8 @@ import typer
 from dotenv import dotenv_values, set_key
 
 from finlexpurple import __version__
+from finlexpurple.agents import invoker as agent_invoker
+from finlexpurple.agents.registry import AgentRequest, get_agent, registered_agents
 from finlexpurple.config import Config, ConfigurationError
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
@@ -34,11 +36,12 @@ from finlexpurple.orchestrator.iteration_limits import (
     IterationLimitConfigurationError,
     IterationLimits,
 )
-from finlexpurple.orchestrator.persistence import load_state
+from finlexpurple.orchestrator.persistence import create_run_directory, load_state
 from finlexpurple.orchestrator.planner import Planner
 from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
 from finlexpurple.providers.factory import create_provider
 from finlexpurple.recon.crawler import ReconError, run_recon
+from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.reporting.output_layout import write_report
 from finlexpurple.scope.confirm import ScopeStorageError, confirm_scope
@@ -63,6 +66,7 @@ _DETECTION_REQUEST_BUDGET = 2000
 
 app = typer.Typer(help="Autonomous security testing agent.", invoke_without_command=True)
 telemetry_app = typer.Typer(help="Manage optional telemetry.", no_args_is_help=True)
+agents_app = typer.Typer(help="List and inspect the named security agents.", no_args_is_help=True)
 
 
 @app.callback(invoke_without_command=True)
@@ -649,4 +653,100 @@ def verify_bundle_command(
         raise typer.Exit(code=1)
 
 
+@agents_app.command(name="list")
+def agents_list() -> None:
+    """Show the full named-agent roster (financial agents arrive in Phase 19)."""
+
+    typer.echo("Named agents:")
+    for item in registered_agents():
+        where = "directly invocable" if item.directly_invocable else "runs within the full pipeline"
+        requires = ", ".join(item.requires) or "none"
+        typer.echo(f"  {item.name:9} [{item.phase:8}] {item.role}")
+        typer.echo(f"            stage={item.stage}; requires={requires}; {where}")
+    typer.echo("")
+    typer.echo("Financial agents (e.g. Cashier, Teller, Vault) arrive in Phase 19.")
+
+
+@app.command(name="run")
+def run_agent(
+    agent: Annotated[str, typer.Option("--agent", help="Agent name (see `finlexpurple agents list`).")],
+    target: Annotated[
+        str | None, typer.Option("--target", help="URL to run the agent against.")
+    ] = None,
+    request_delay: Annotated[
+        float, typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests.")
+    ] = 0.5,
+) -> None:
+    """Run one named agent in isolation (fewer LLM calls than a full scan)."""
+
+    resolved = get_agent(agent)
+    if resolved is None:
+        known = ", ".join(a.name for a in registered_agents())
+        typer.echo(f"Unknown agent {agent!r}. Known agents: {known}.", err=True)
+        raise typer.Exit(code=2)
+
+    available: set[str] = set()
+    normalized: Target | None = None
+    if target is not None:
+        try:
+            normalized = Target.parse(target)
+        except InvalidTargetError as exc:
+            typer.echo(f"Invalid target: {exc}", err=True)
+            raise typer.Exit(code=2) from None
+        if normalized.kind != "url":
+            typer.echo("Agent runs need a URL --target.", err=True)
+            raise typer.Exit(code=2)
+        available.add("target")
+
+    # A clean explanation when the agent cannot run on its own — never a traceback.
+    reason = agent_invoker.unavailable_reason(resolved, available)
+    if reason is not None:
+        typer.echo(reason, err=True)
+        raise typer.Exit(code=2)
+    assert normalized is not None  # a runnable stage agent reached here with a URL target
+
+    # Same authorization safety as `scan`: confirm scope (fresh) and attest.
+    try:
+        confirmed_scope = confirm_scope(normalized, force=True)
+    except ScopeStorageError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if confirmed_scope is None:
+        typer.echo("Scope was not confirmed; the agent was not run.", err=True)
+        raise typer.Exit(code=1)
+    _, directory = create_run_directory(normalized.canonical)
+    audit = AuditLog(directory / "audit.jsonl")
+    record_attestation(
+        audit,
+        target=normalized.canonical,
+        attested_at=confirmed_scope.first_confirmed_at or datetime.now(timezone.utc),
+    )
+    audit.record("agent_invoked", agent=resolved.name)
+    typer.echo(f"Authorization attested for {normalized.canonical} (recorded in the run audit log).")
+
+    origin = _detection_origin(normalized.canonical) or normalized.canonical
+    prober = HttpProber(
+        EgressPolicy.for_run(target_hosts=[urlsplit(origin).hostname or ""]),
+        budget=RequestBudget(_DETECTION_REQUEST_BUDGET),
+        rate_limiter=RateLimiter(request_delay),
+    )
+
+    def _recon(url: str) -> list[Endpoint]:
+        return list(run_recon(confirmed_scope, url, request_delay=request_delay).catalog.endpoints)
+
+    request = AgentRequest(target=normalized.canonical, recon=_recon, prober=prober)
+    try:
+        result = agent_invoker.invoke(resolved, request)
+    except (ReconError, OutOfScopeError) as exc:
+        typer.echo(f"Agent could not run safely: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Agent '{result.agent}': {result.summary}")
+    for finding in result.findings:
+        typer.echo(
+            f"  [{finding.status.value}] {finding.severity.value} "
+            f"{finding.vulnerability_class} {finding.url}"
+        )
+
+
 app.add_typer(telemetry_app, name="telemetry")
+app.add_typer(agents_app, name="agents")
