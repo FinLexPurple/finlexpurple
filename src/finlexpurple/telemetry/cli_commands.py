@@ -16,8 +16,12 @@ from typing import Any
 from dotenv import set_key
 
 from finlexpurple.config import Config
-from finlexpurple.telemetry import allowlist, collector
-from finlexpurple.telemetry.install_counter import get_or_create_install_id
+from finlexpurple.telemetry import allowlist, collector, sender
+from finlexpurple.telemetry.install_counter import (
+    get_or_create_install_id,
+    install_ping_sent,
+    mark_install_ping_sent,
+)
 
 # Stated plainly wherever telemetry is mentioned to the user (§8).
 PURPOSE = (
@@ -83,3 +87,24 @@ def disable_telemetry(env_path: Path) -> str:
 
     set_key(str(env_path), "TELEMETRY_ENABLED", "false", quote_mode="never", encoding="utf-8")
     return f"Telemetry disabled (saved to {env_path})."
+
+
+def send_install_ping_once(config: Config, *, transport: sender.Transport | None = None) -> str:
+    """Send the opt-in install ping at most once per install; no-op when off.
+
+    Called right after the user opts in. The payload is the minimal install
+    record ({event, install_id}); the server de-duplicates by the random local
+    install id, so even a re-send never double-counts. A local marker keeps it to
+    one send per install. With telemetry off this sends nothing.
+    """
+
+    if not config.telemetry_enabled:
+        return "Telemetry is off; no install ping sent."
+    if install_ping_sent():
+        return "Install ping already sent for this install (the server de-duplicates by install id)."
+    payload = collector.build_install_payload(get_or_create_install_id())
+    result = sender.send(payload, config=config, transport=transport)
+    if not result.sent:
+        return f"Install ping not sent: {result.reason}"
+    mark_install_ping_sent()
+    return f"Install ping sent to {config.telemetry_endpoint} (status {result.status_code})."
