@@ -16,7 +16,7 @@ from dotenv import dotenv_values, set_key
 from finlexpurple import __version__
 from finlexpurple.agents import invoker as agent_invoker
 from finlexpurple.agents.registry import AgentRequest, get_agent, registered_agents
-from finlexpurple.config import Config, ConfigurationError
+from finlexpurple.config import DEFAULT_TELEMETRY_ENDPOINT, Config, ConfigurationError
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.bundle import BundleFormatError
@@ -450,7 +450,7 @@ def _telemetry_config() -> Config:
         return Config.load()
     except ConfigurationError:
         enabled = os.environ.get("TELEMETRY_ENABLED", "").strip().lower() in {"true", "1", "yes", "on"}
-        endpoint = os.environ.get("TELEMETRY_ENDPOINT") or None
+        endpoint = os.environ.get("TELEMETRY_ENDPOINT") or DEFAULT_TELEMETRY_ENDPOINT
         return Config.model_construct(telemetry_enabled=enabled, telemetry_endpoint=endpoint)
 
 
@@ -465,9 +465,11 @@ def show() -> None:
 
 @telemetry_app.command()
 def on() -> None:
-    """Opt in to telemetry (writes TELEMETRY_ENABLED=true to ./.env)."""
+    """Opt in to telemetry (writes TELEMETRY_ENABLED=true to ./.env) and ping once."""
 
     typer.echo(telemetry_cli.enable_telemetry(Path.cwd() / ".env"))
+    # Now that the user has opted in, send the one-time install ping.
+    typer.echo(telemetry_cli.send_install_ping_once(_telemetry_config()))
 
 
 @telemetry_app.command()
