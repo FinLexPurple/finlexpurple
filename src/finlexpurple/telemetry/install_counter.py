@@ -25,6 +25,28 @@ def install_id_path(directory: Path | None = None) -> Path:
     return base / "install-id"
 
 
+def install_ping_marker_path(directory: Path | None = None) -> Path:
+    """Return the local marker path recording that the install ping was sent."""
+
+    base = directory or user_config_directory().parent
+    return base / "install-ping-sent"
+
+
+def install_ping_sent(path: Path | None = None) -> bool:
+    """True if the install ping has already been sent for this install."""
+
+    return (path or install_ping_marker_path()).exists()
+
+
+def mark_install_ping_sent(path: Path | None = None) -> None:
+    """Record that the install ping was sent, so it is sent at most once."""
+
+    location = path or install_ping_marker_path()
+    location.parent.mkdir(parents=True, exist_ok=True)
+    location.write_text("sent\n", encoding="utf-8")
+    ensure_owner_only(location)
+
+
 def get_or_create_install_id(path: Path | None = None) -> str:
     """Return the stored random install UUID, generating and persisting one once.
 
