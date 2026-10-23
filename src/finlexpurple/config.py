@@ -13,6 +13,11 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finlexpurple.hardware.tiers import ModelTier
 
+# Default destination for opt-in telemetry: the public install-counter Worker.
+# Still overridable via the TELEMETRY_ENDPOINT environment variable; nothing is
+# ever sent unless the user has turned telemetry on (§8/§22).
+DEFAULT_TELEMETRY_ENDPOINT = "https://finlexpurple-install-counter.finlexpurple.workers.dev/ping"
+
 
 class LLMProvider(str, Enum):
     """Supported model providers."""
@@ -58,9 +63,12 @@ class Config(BaseSettings):
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
     require_human_approval: bool = Field(default=True, validation_alias="REQUIRE_HUMAN_APPROVAL")
     telemetry_enabled: bool = Field(default=False, validation_alias="TELEMETRY_ENABLED")
-    # Where opt-in telemetry is sent. Deliberately not defaulted to a live URL:
-    # the receiving endpoint lives in the separate webapp repo (decisions.md §22).
-    telemetry_endpoint: str | None = Field(default=None, validation_alias="TELEMETRY_ENDPOINT")
+    # Where opt-in telemetry is sent; defaults to the public install-counter
+    # Worker and is overridable via TELEMETRY_ENDPOINT. Having a default does not
+    # change the opt-in rule: nothing is sent unless telemetry is turned on (§8).
+    telemetry_endpoint: str | None = Field(
+        default=DEFAULT_TELEMETRY_ENDPOINT, validation_alias="TELEMETRY_ENDPOINT"
+    )
     model_tier: ModelTier | None = Field(default=None, validation_alias="MODEL_TIER")
 
     @field_validator("llm_provider", mode="before")
