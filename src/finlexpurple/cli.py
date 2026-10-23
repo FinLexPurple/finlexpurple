@@ -666,7 +666,10 @@ def agents_list() -> None:
         typer.echo(f"  {item.name:9} [{item.phase:8}] {item.role}")
         typer.echo(f"            stage={item.stage}; requires={requires}; {where}")
     typer.echo("")
-    typer.echo("Financial agents (e.g. Cashier, Teller, Vault) arrive in Phase 19.")
+    typer.echo(
+        "Financial agents: compass, cashier, teller are available (Phase 19a); "
+        "ledger, broker, vault, underwriter, courier arrive in Phase 19b."
+    )
 
 
 @app.command(name="run")

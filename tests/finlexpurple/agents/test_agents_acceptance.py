@@ -43,7 +43,8 @@ def _recon(_url: str) -> list[Endpoint]:
 
 def test_item1_roster_lists_every_agent_with_descriptions() -> None:
     agents = registered_agents()
-    assert len(agents) == 8
+    stage = [a for a in agents if a.family == "stage"]
+    assert len(stage) == 8  # the eight stage agents
     assert all(a.role.strip() for a in agents)
 
 

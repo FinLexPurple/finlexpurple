@@ -14,6 +14,7 @@ invoker turns an unmet requirement into a clean explanation rather than a crash.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -28,6 +29,8 @@ TARGET = "target"
 FINDINGS = "findings"
 SOURCE = "source"
 MCP_CONFIG = "mcp_config"
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -121,6 +124,69 @@ def _sentinel(request: AgentRequest) -> AgentResult:
     )
 
 
+# --- Financial agents (Phase 19a). finance/ is imported lazily inside each entry
+#     point so the registry has no import cycle with the finance package. --------
+
+
+def _compass(request: AgentRequest) -> AgentResult:
+    """Triage: fingerprint the target (read-only) and recommend a specialist."""
+
+    assert request.target is not None
+    from finlexpurple.finance import gateway_profiles
+
+    corpus = request.target
+    if request.prober is not None:
+        try:
+            response = request.prober.request("GET", request.target)
+            corpus += "\n" + " ".join(f"{k}:{v}" for k, v in response.headers.items())
+            corpus += "\n" + response.text
+        except Exception as exc:  # noqa: BLE001 - triage is best-effort; recon paths still inform it
+            logger.debug("Compass fingerprint GET failed; using recon paths only: %s", exc)
+    if request.recon is not None:
+        corpus += "\n" + "\n".join(endpoint.url for endpoint in request.recon(request.target))
+    gateways = gateway_profiles.identify_gateways(corpus)
+    recommended = gateway_profiles.recommend_specialist(gateways)
+    names = ", ".join(gateway.name for gateway in gateways) or "none detected"
+    return AgentResult(
+        "compass", [], 0, f"gateways: {names}; recommended specialist: {recommended or 'none'}"
+    )
+
+
+def _cashier(request: AgentRequest) -> AgentResult:
+    """E-commerce payment testing: read-only candidate findings (reported)."""
+
+    assert request.target is not None and request.recon is not None
+    from finlexpurple.finance import payment_tests
+
+    endpoints = request.recon(request.target)
+    findings = payment_tests.run_all(endpoints, agent="cashier")
+    return AgentResult(
+        "cashier", findings, 0,
+        f"{len(findings)} payment finding(s) across {len(endpoints)} endpoint(s) "
+        "(reported; verification is human-gated)",
+    )
+
+
+def _teller(request: AgentRequest) -> AgentResult:
+    """Banking testing: read-only by default; state-changing steps are hard-gated.
+
+    Detection is read-only and never exploits the target; any state-changing step
+    (none are performed here) must route through finance.banking_mode's hard gate,
+    which no config/tier can disable.
+    """
+
+    assert request.target is not None and request.recon is not None
+    from finlexpurple.finance import payment_tests
+
+    endpoints = request.recon(request.target)
+    findings = payment_tests.run_all(endpoints, agent="teller")
+    return AgentResult(
+        "teller", findings, 0,
+        f"{len(findings)} banking finding(s), read-only; state-changing steps are hard-gated "
+        "and never auto-run",
+    )
+
+
 # --- The roster ---------------------------------------------------------------
 
 _AGENTS: dict[str, StageAgent] = {
@@ -142,6 +208,13 @@ _AGENTS: dict[str, StageAgent] = {
                    requires=(FINDINGS,), entry=None),
         StageAgent("mcp", "AI-agent / MCP offensive testing", "mcp", "Phase 9",
                    requires=(MCP_CONFIG,), entry=None),
+        # Financial suite — Phase 19a (the rest arrive in 19b).
+        StageAgent("compass", "Triage — fingerprint the target and recommend a specialist",
+                   "triage", "Phase 19a", requires=(TARGET,), family="financial", entry=_compass),
+        StageAgent("cashier", "E-commerce / retail payment testing", "payments", "Phase 19a",
+                   requires=(TARGET,), family="financial", entry=_cashier),
+        StageAgent("teller", "Banking — read-only, hard-gated (no override, any tier)",
+                   "banking", "Phase 19a", requires=(TARGET,), family="financial", entry=_teller),
     )
 }
 

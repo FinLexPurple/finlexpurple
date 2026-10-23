@@ -9,9 +9,10 @@ _EXPECTED = {"scout", "marshal", "hunter", "sentinel", "warden", "forge", "heral
 
 
 def test_roster_has_every_stage_agent() -> None:
-    names = {a.name for a in registered_agents()}
-    assert names == _EXPECTED
-    assert all(a.family == "stage" for a in registered_agents())  # financial slots stay open
+    stage = {a.name for a in registered_agents() if a.family == "stage"}
+    assert stage == _EXPECTED  # the eight stage agents
+    financial = {a.name for a in registered_agents() if a.family == "financial"}
+    assert {"compass", "cashier", "teller"} <= financial  # Phase 19a registered too
     for a in registered_agents():
         assert a.role and a.stage and a.phase  # accurate, non-empty descriptions
 
