@@ -667,8 +667,8 @@ def agents_list() -> None:
         typer.echo(f"            stage={item.stage}; requires={requires}; {where}")
     typer.echo("")
     typer.echo(
-        "Financial agents: compass, cashier, teller are available (Phase 19a); "
-        "ledger, broker, vault, underwriter, courier arrive in Phase 19b."
+        "Financial agents: compass, cashier, teller (Phase 19a) and ledger, broker, vault, "
+        "underwriter, courier (Phase 19b) are all available. Teller and Vault are hard-gated."
     )
 
 

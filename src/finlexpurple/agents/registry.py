@@ -187,6 +187,65 @@ def _teller(request: AgentRequest) -> AgentResult:
     )
 
 
+# --- Financial agents (Phase 19b). Same pattern as 19a: registry entry points
+#     over the shared read-only payment suite (per-agent attack taxonomies are
+#     deferred until specified). Vault is hard-gated like Teller. ---------------
+
+
+def _payment_agent_result(request: AgentRequest, *, name: str, note: str) -> AgentResult:
+    """Run the shared read-only payment suite for a standard-gate financial agent."""
+
+    assert request.target is not None and request.recon is not None
+    from finlexpurple.finance import payment_tests
+
+    endpoints = request.recon(request.target)
+    findings = payment_tests.run_all(endpoints, agent=name)
+    return AgentResult(
+        name, findings, 0,
+        f"{len(findings)} {note} finding(s) across {len(endpoints)} endpoint(s) "
+        "(reported; verification is human-gated)",
+    )
+
+
+def _ledger(request: AgentRequest) -> AgentResult:
+    """Subscription / recurring-billing testing (standard gate)."""
+
+    return _payment_agent_result(request, name="ledger", note="subscription")
+
+
+def _broker(request: AgentRequest) -> AgentResult:
+    """Marketplace / multi-party payout testing (standard gate)."""
+
+    return _payment_agent_result(request, name="broker", note="marketplace payout")
+
+
+def _underwriter(request: AgentRequest) -> AgentResult:
+    """Lending / Buy-Now-Pay-Later testing (standard gate)."""
+
+    return _payment_agent_result(request, name="underwriter", note="lending/BNPL")
+
+
+def _courier(request: AgentRequest) -> AgentResult:
+    """Remittance / international-transfer testing (standard gate)."""
+
+    return _payment_agent_result(request, name="courier", note="remittance")
+
+
+def _vault(request: AgentRequest) -> AgentResult:
+    """Crypto / Web3 testing: read-only, hard-gated like Teller (irreversible txns)."""
+
+    assert request.target is not None and request.recon is not None
+    from finlexpurple.finance import payment_tests
+
+    endpoints = request.recon(request.target)
+    findings = payment_tests.run_all(endpoints, agent="vault")
+    return AgentResult(
+        "vault", findings, 0,
+        f"{len(findings)} crypto/Web3 finding(s), read-only; state-changing steps are hard-gated "
+        "(like Teller) and never auto-run",
+    )
+
+
 # --- The roster ---------------------------------------------------------------
 
 _AGENTS: dict[str, StageAgent] = {
@@ -215,6 +274,17 @@ _AGENTS: dict[str, StageAgent] = {
                    requires=(TARGET,), family="financial", entry=_cashier),
         StageAgent("teller", "Banking — read-only, hard-gated (no override, any tier)",
                    "banking", "Phase 19a", requires=(TARGET,), family="financial", entry=_teller),
+        # Financial suite — Phase 19b.
+        StageAgent("ledger", "Subscription / recurring billing", "payments", "Phase 19b",
+                   requires=(TARGET,), family="financial", entry=_ledger),
+        StageAgent("broker", "Marketplace / multi-party payouts", "payments", "Phase 19b",
+                   requires=(TARGET,), family="financial", entry=_broker),
+        StageAgent("vault", "Crypto / Web3 — read-only, hard-gated (no override, any tier)",
+                   "crypto", "Phase 19b", requires=(TARGET,), family="financial", entry=_vault),
+        StageAgent("underwriter", "Lending / Buy-Now-Pay-Later", "payments", "Phase 19b",
+                   requires=(TARGET,), family="financial", entry=_underwriter),
+        StageAgent("courier", "Remittance / international transfer", "payments", "Phase 19b",
+                   requires=(TARGET,), family="financial", entry=_courier),
     )
 }
 
