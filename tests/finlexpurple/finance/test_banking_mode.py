@@ -53,3 +53,15 @@ def test_refuses_a_non_hard_gated_category() -> None:
     with pytest.raises(BankingSafetyError):
         gate_state_change(_gate(require_human_approval=False, interactive=False),
                           "transfer", category="ecommerce")
+
+
+def test_vault_is_hard_gated_like_teller_under_every_override() -> None:
+    # Phase 19b: Vault shares Teller's non-overridable rule (irreversible crypto txns).
+    from finlexpurple.finance.banking_mode import VAULT_CATEGORY
+
+    for require in (True, False):
+        outcome = gate_state_change(
+            _gate(require_human_approval=require, interactive=False),
+            "send crypto withdrawal", category=VAULT_CATEGORY,
+        )
+        assert outcome is GateOutcome.PAUSED and outcome is not GateOutcome.ALLOWED

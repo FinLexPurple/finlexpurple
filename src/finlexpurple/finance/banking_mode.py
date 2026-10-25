@@ -16,8 +16,11 @@ from __future__ import annotations
 
 from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome, is_hard_gated
 
-# The banking category is hard-gated (see approval_gate.HARD_GATED_CATEGORIES).
+# Hard-gated categories (see approval_gate.HARD_GATED_CATEGORIES). Teller (banking)
+# and Vault (crypto/Web3) share the identical non-overridable rule — crypto
+# transactions are irreversible in the same way core-banking actions are (§14).
 BANKING_CATEGORY = "teller"
+VAULT_CATEGORY = "vault"
 
 
 class BankingSafetyError(RuntimeError):
