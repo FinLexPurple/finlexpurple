@@ -51,6 +51,19 @@ def test_item3_ungrounded_narrative_never_reaches_report(tmp_path: Path) -> None
     assert "XYZZY-SECRET" not in md  # quote_grounding caught it; template used instead
 
 
+def test_every_report_finding_names_its_agent(tmp_path: Path) -> None:
+    # Phase 20 §16 per-finding attribution: both report formats name each
+    # finding's agent — the markdown "Agent:" line and the JSON "agent" field.
+    findings = _findings()
+    paths = write_report(findings, target="t", out_root=tmp_path, now=_NOW)
+    md = paths.report_md.read_text()
+    assert md.count("- Agent: web") == len(findings)
+    assert "- Agent: n/a" not in md
+    report = json.loads(paths.report_json.read_text())
+    assert [f["agent"] for f in report["findings"]] == ["web", "web"]
+    assert all(f["agent"] for f in report["findings"])
+
+
 def test_item4_layout_and_bundle_reference_for_verified(tmp_path: Path) -> None:
     findings = _findings()
     paths = write_report(findings, target="t", out_root=tmp_path, now=_NOW)
