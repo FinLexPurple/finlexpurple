@@ -70,6 +70,9 @@ class Config(BaseSettings):
         default=DEFAULT_TELEMETRY_ENDPOINT, validation_alias="TELEMETRY_ENDPOINT"
     )
     model_tier: ModelTier | None = Field(default=None, validation_alias="MODEL_TIER")
+    # Default-on dollar spend cap for model usage (§15). Always a real, positive
+    # number: the cap is never off, and a looser budget means a larger number.
+    max_spend_usd: float = Field(default=5.0, validation_alias="MAX_SPEND_USD")
 
     @field_validator("llm_provider", mode="before")
     @classmethod
@@ -99,6 +102,19 @@ class Config(BaseSettings):
                 )
             return normalized
         return value
+
+    @field_validator("max_spend_usd", mode="before")
+    @classmethod
+    def validate_max_spend(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return 5.0
+        try:
+            amount = float(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"invalid MAX_SPEND_USD {value!r}; expected a positive number") from None
+        if amount <= 0:
+            raise ValueError("MAX_SPEND_USD must be a positive number")
+        return amount
 
     @field_validator("model_tier", mode="before")
     @classmethod
@@ -178,6 +194,7 @@ class Config(BaseSettings):
             "TELEMETRY_ENABLED",
             "TELEMETRY_ENDPOINT",
             "MODEL_TIER",
+            "MAX_SPEND_USD",
         }
         for name in config_names:
             if name in os.environ and not os.environ[name]:
