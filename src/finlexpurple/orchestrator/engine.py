@@ -24,6 +24,7 @@ from finlexpurple.orchestrator.persistence import create_run_directory, save_sta
 from finlexpurple.orchestrator.planner import Planner
 from finlexpurple.orchestrator.state import RunState
 from finlexpurple.recon.crawler import ReconResult
+from finlexpurple.security.budget_guard import BudgetGuard, SpendBudgetExceededError
 from finlexpurple.security.safe_failure import SafeFailureController, StoppedAtSafePoint
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ def run(
     executor: Executor | None = None,
     limits: IterationLimits | None = None,
     controller: SafeFailureController | None = None,
+    budget_guard: BudgetGuard | None = None,
 ) -> RunState:
     """Run or resume state transitions, saving after each completed stage.
 
@@ -100,7 +102,11 @@ def run(
     ``limits`` are injectable (defaults are constructed here) to keep the loop
     testable. If a limit is hit, the loop records ``state.stop_reason``,
     persists, and returns early; a run already at ``report`` is returned
-    untouched. Returns the (mutated) ``state``.
+    untouched. ``budget_guard``, when present, is the default-on dollar spend cap
+    (§15): it is seeded from the persisted ``state.spend_usd`` so the cap spans a
+    resumed run, its total is persisted on every save, and a
+    :class:`SpendBudgetExceededError` from a metered provider stops the run
+    resumably with a recorded reason. Returns the (mutated) ``state``.
     """
 
     active_planner = planner or Planner()
@@ -109,6 +115,12 @@ def run(
     # Already finished: nothing to do, and 'report' is terminal.
     if state.current_stage == "report":
         return state
+    # Seed the spend cap from what prior (resumed) segments already spent, so the
+    # dollar cap applies across the whole run rather than resetting each resume.
+    # The same guard instance is shared with the planner's metered provider, so
+    # we seed in place rather than replacing it.
+    if budget_guard is not None:
+        budget_guard.seed(float(state.spend_usd))
     started = time.monotonic()
     # Time already spent in previous (resumed) segments, so wall-clock accounting
     # spans the whole run rather than just this invocation.
@@ -133,9 +145,11 @@ def run(
         return reason
 
     def save_current() -> None:
-        """Bank elapsed time into the counters and atomically persist the state."""
+        """Bank elapsed time and spend into the state and atomically persist it."""
 
         state.counters["elapsed_seconds"] = elapsed()
+        if budget_guard is not None:
+            state.spend_usd = budget_guard.spent
         save_state(state_path, state)
 
     def persist_transition(next_stage: str) -> None:
@@ -145,8 +159,12 @@ def run(
         save_current()
 
     # Each iteration handles exactly one stage, persisting before looping, so a
-    # kill at any point leaves a resumable state on disk.
-    while state.current_stage != "report":
+    # kill at any point leaves a resumable state on disk. A spend-cap stop from a
+    # metered provider surfaces here as SpendBudgetExceededError: because the
+    # guard refuses the call before any spend and before the stage mutates its
+    # state, the run halts at a clean, resumable stage boundary.
+    try:
+      while state.current_stage != "report":
         # Safe point (Phase 8 kill switch): if a stop was requested, halt here —
         # between stages, with the last stage's state already persisted — rather
         # than part-way through a stage.
@@ -161,6 +179,18 @@ def run(
         reason = reached(check_iterations=state.current_stage == "plan")
         if reason:
             state.stop_reason = reason
+            save_current()
+            return state
+        # Dollar spend cap (§15): if a prior model call pushed spend to the cap,
+        # stop here at a stage boundary — cleanly and resumably — before doing
+        # any more work. The metered provider also refuses further paid calls, so
+        # this is defense in depth, not the only line.
+        if budget_guard is not None and budget_guard.spent >= budget_guard.max_spend_usd:
+            state.stop_reason = (
+                f"Spend cap of ${budget_guard.max_spend_usd:.2f} reached "
+                f"(spent ${budget_guard.spent:.4f})."
+            )
+            logger.warning("Orchestration stopped: %s", state.stop_reason)
             save_current()
             return state
         if state.current_stage == "recon":
@@ -210,6 +240,13 @@ def run(
                     persist_transition("plan")
                 else:
                     persist_transition("report")
+    except SpendBudgetExceededError as exc:
+        # The spend cap refused the next model call before any spend occurred and
+        # before the current stage mutated; persist and stop resumably.
+        state.stop_reason = str(exc)
+        logger.warning("Orchestration stopped: %s", state.stop_reason)
+        save_current()
+        return state
     state.stop_reason = None
     save_current()
     return state
