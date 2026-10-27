@@ -29,3 +29,32 @@ jobs:
           python -m mypy --platform win32
           python -m mypy --platform darwin
           python -m mypy --platform linux
+
+  supply-chain:
+    name: Our-own-package supply-chain integrity (§28 #2)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install our package and pip-audit
+        run: |
+          python -m pip install -e .
+          python -m pip install "pip-audit>=2.7"
+      - name: Audit our own dependencies for known vulnerabilities
+        # Audits this environment (our runtime dependencies) against the PyPI
+        # advisory database. A known-vulnerable dependency fails the build.
+        run: python -m pip_audit --strict --progress-spinner off
+      - name: Dependency-confusion namespace guard
+        # Fails if anything in the finlexpurple namespace is installed that we do
+        # not publish, or that lacks our first-party provenance.
+        run: |
+          python - <<'PY'
+          import sys
+          from finlexpurple.supplychain.namespace_guard import audit_environment
+          warnings = audit_environment()
+          for w in warnings:
+              print(f"::error::namespace guard: {w.distribution} — {w.reason}")
+          sys.exit(1 if warnings else 0)
+          PY
