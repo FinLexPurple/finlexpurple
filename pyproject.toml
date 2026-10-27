@@ -61,7 +61,7 @@ dev = [
 ]
 
 [project.scripts]
-finlexpurple = "finlexpurple.cli:app"
+finlexpurple = "finlexpurple.cli:main"
 
 [build-system]
 requires = ["hatchling"]

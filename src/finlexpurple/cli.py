@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 import typer
 from dotenv import dotenv_values, set_key
 
+from finlexpurple import branding
 from finlexpurple.agents import invoker as agent_invoker
 from finlexpurple.agents.registry import AgentRequest, get_agent, registered_agents
 from finlexpurple.config import DEFAULT_TELEMETRY_ENDPOINT, Config, ConfigurationError
@@ -76,6 +78,10 @@ def root_callback(
         bool,
         typer.Option("--json-logs", help="Write logs as machine-readable JSON lines."),
     ] = False,
+    no_banner: Annotated[
+        bool,
+        typer.Option("--no-banner", help="Suppress the interactive brand banner."),
+    ] = False,
     version: Annotated[
         bool,
         typer.Option("--version", help="Print the installed version and exit."),
@@ -84,12 +90,18 @@ def root_callback(
     """Set global CLI behavior before dispatching the selected command."""
 
     configure_logging(json_logs=json_logs)
+    # The banner is cosmetic: machine-readable modes and an explicit opt-out
+    # suppress it, and branding.py itself prints only to an interactive stderr.
+    suppressed = no_banner or json_logs
+    ctx.obj = {"no_banner": suppressed}
     if version:
         from finlexpurple.release import version_line
 
+        # --version is machine-parseable: no banner, only the version on stdout.
         typer.echo(version_line())  # semver + cosmetic codename (§16)
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
+        branding.print_banner(suppressed=suppressed)
         typer.echo(ctx.get_help())
 
 
@@ -335,6 +347,7 @@ def init() -> None:
 
 @app.command()
 def scan(
+    ctx: typer.Context,
     target: Annotated[
         str | None,
         typer.Option("--target", help="URL, IP/CIDR, or existing local directory to scope."),
@@ -370,6 +383,9 @@ def scan(
     recon, or an unsafe/mismatched resume, printing a specific message rather
     than a traceback.
     """
+
+    # Compact interactive brand line (stderr, TTY-only), never on parsed output.
+    branding.print_brand_line(suppressed=bool((ctx.obj or {}).get("no_banner")))
 
     if resume is not None and target is not None:
         typer.echo("--target cannot be combined with --resume; the saved target is used.", err=True)
@@ -768,3 +784,39 @@ def run_agent(
 
 app.add_typer(telemetry_app, name="telemetry")
 app.add_typer(agents_app, name="agents")
+
+
+def _is_top_level_help(argv: list[str]) -> bool:
+    """True if ``argv`` is a top-level help request (a help flag before any subcommand).
+
+    ``finlexpurple --help`` is top-level; ``finlexpurple scan --help`` is not (a
+    subcommand precedes the flag), so the banner stays off subcommand help.
+    """
+
+    for token in argv:
+        if token in ("--help", "-h"):
+            return True
+        if not token.startswith("-"):
+            return False  # a subcommand (or its argument) came first
+    return False
+
+
+def main() -> None:
+    """Console-script entrypoint: show the top-level banner, then run the app.
+
+    Click handles ``--help`` with an eager option that exits before the group
+    callback body runs, so the banner for top-level ``--help`` is printed here
+    rather than in ``root_callback`` (which still prints it for the bare
+    invocation). Both honor ``--no-banner``/``--json-logs`` and print only to an
+    interactive stderr.
+    """
+
+    argv = sys.argv[1:]
+    suppressed = "--no-banner" in argv or "--json-logs" in argv
+    if _is_top_level_help(argv):
+        branding.print_banner(suppressed=suppressed)
+    app()
+
+
+if __name__ == "__main__":
+    main()
