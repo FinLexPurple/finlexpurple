@@ -1,8 +1,7 @@
-"""Tiered container isolation for the agent's own execution (Phase 7; decisions.md §27).
+"""Tiered container isolation for the agent's own execution (decisions.md §27).
 
 The scan runs inside an isolated environment, not directly on the host. This
-module builds the **None** and **Standard** tiers and enforces the strict
-host↔container boundary.
+module builds all three tiers and enforces the strict host↔container boundary.
 
 * **None** — runs on the host, only after an explicit warning. For machines
   without Docker or users who accept the trade-off.
@@ -14,9 +13,13 @@ host↔container boundary.
   and **never** runs privileged (decisions.md §15). If Standard is selected but
   Docker is unavailable, the run refuses rather than silently running on the
   host.
-* **Maximum** (gVisor) — not built here; it is the Phase 20 self-isolation
-  hardening and is explicitly distinct from the Phase 14 container-testing
-  module. Selecting it raises a clear "lands in Phase 20" error.
+* **Maximum** (gVisor) — Phase 20 self-isolation hardening, explicitly distinct
+  from the Phase 14 container-testing module. It adds the ``runsc`` runtime
+  (gVisor's user-space kernel) on top of every Standard hardening flag, so a
+  container breakout must pierce gVisor's syscall filter before it reaches the
+  host kernel. gVisor is Linux-only and installed separately; where it is not
+  present the tier logs a warning and falls back to the Standard hardened
+  container rather than silently claiming a protection it cannot give.
 
 The ``docker run`` argument list is built and hardening-checked by pure
 functions so it is unit-testable without Docker; the end-to-end container run is
@@ -99,6 +102,25 @@ def docker_available() -> bool:
     return result.returncode == 0 and not result.timed_out and bool(result.stdout.strip())
 
 
+def gvisor_available() -> bool:
+    """True only if Docker exposes the gVisor (runsc) runtime.
+
+    gVisor is Linux-only (its sandbox intercepts Linux syscalls), so this is
+    always False on macOS/Windows hosts (decisions.md §18 item 11). On Linux it
+    checks Docker's registered runtimes for ``runsc``.
+    """
+
+    if sys.platform != "linux" or not docker_available():
+        return False
+    try:
+        result = run_sandboxed(
+            ["docker", "info", "--format", "{{.Runtimes}}"], timeout=15, env=dict(os.environ)
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and "runsc" in result.stdout
+
+
 def _container_user() -> str | None:
     """Run as the host's own uid:gid on POSIX (non-root, and able to write the output mount)."""
 
@@ -120,17 +142,22 @@ def build_docker_run_argv(
     secret_env_names: Sequence[str] = (),
     memory: str = "1g",
     pids_limit: int = 256,
+    runtime: str | None = None,
 ) -> list[str]:
     """Construct a hardened ``docker run`` argument list (no shell, no socket, no privilege).
 
     Only ``source_dir`` (read-only, at ``/work/src``) and ``output_dir``
     (writable, at ``/work/out``) cross the boundary. Network is disabled. Secret
-    env vars are passed by name at runtime. The result is validated by
+    env vars are passed by name at runtime. ``runtime`` selects the container
+    runtime — ``"runsc"`` for the Maximum (gVisor) tier — and is omitted for the
+    Standard tier (Docker's default runtime). The result is validated by
     :func:`assert_hardened` before being returned.
     """
 
-    argv: list[str] = [
-        "docker", "run", "--rm",
+    argv: list[str] = ["docker", "run", "--rm"]
+    if runtime is not None:
+        argv += ["--runtime", runtime]  # e.g. gVisor's runsc (Maximum tier, §27)
+    argv += [
         "--network", "none",            # no egress from the container by default
         "--read-only",                  # read-only root filesystem
         "--tmpfs", "/tmp",              # a small writable scratch, since root is ro
@@ -187,8 +214,9 @@ def run_in_isolation(
     """Run ``inner_argv`` under the given isolation tier.
 
     None runs on the host (after a warning); Standard runs inside the hardened
-    container (refusing if Docker is unavailable); Maximum is deferred to
-    Phase 20.
+    container (refusing if Docker is unavailable); Maximum adds the gVisor
+    (runsc) runtime where available and falls back to Standard with a warning
+    where it is not (e.g. non-Linux hosts, or gVisor not installed).
     """
 
     if tier is IsolationTier.NONE:
@@ -199,18 +227,24 @@ def run_in_isolation(
         output_dir.mkdir(parents=True, exist_ok=True)
         return run_sandboxed(inner_argv, timeout=timeout, cwd=output_dir)
 
-    if tier is IsolationTier.MAXIMUM:
-        raise IsolationError(
-            "The Maximum (gVisor) isolation tier is built in Phase 20, not Phase 7. "
-            "Use Standard or None for now."
-        )
-
-    # Standard tier.
+    # Standard and Maximum both need Docker.
     if not docker_available():
         raise IsolationUnavailableError(
-            "Isolation tier is STANDARD but Docker is not available. Install/start "
+            f"Isolation tier is {tier.value.upper()} but Docker is not available. Install/start "
             "Docker, or choose the None tier (which runs on the host, with a warning)."
         )
+
+    runtime: str | None = None
+    if tier is IsolationTier.MAXIMUM:
+        if gvisor_available():
+            runtime = "runsc"  # gVisor: an extra filter between container and host kernel (§27)
+        else:
+            logger.warning(
+                "Maximum tier requested but the gVisor (runsc) runtime is not available on this "
+                "host (gVisor is Linux-only and installed separately; §27). Falling back to the "
+                "Standard hardened container."
+            )
+
     output_dir.mkdir(parents=True, exist_ok=True)
     argv = build_docker_run_argv(
         image,
@@ -218,6 +252,7 @@ def run_in_isolation(
         output_dir=output_dir,
         source_dir=source_dir,
         secret_env_names=secret_env_names,
+        runtime=runtime,
     )
     # The docker CLI runs with the host environment (to reach the daemon and to
     # resolve -e NAME secret passthrough); the container itself gets the clean,
