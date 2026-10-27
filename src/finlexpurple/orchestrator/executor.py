@@ -91,6 +91,11 @@ class WebDetector:
         )
         findings = dispatch.run_relevant(reconstructed, self._prober, self._fingerprint)
         for finding in findings:
+            # Per-finding agent attribution (§16): web-detection findings are the
+            # work of the 'hunter' detection agent. Set it only if a detector did
+            # not already self-attribute, so a future specialist is not overwritten.
+            if finding.agent is None:
+                finding.agent = "hunter"
             # Deterministic replay sets the status; collaborators it lacks (e.g.
             # a second IDOR session, an XSS browser) leave that class reported.
             verifier_engine.verify(finding, prober=self._prober, canary=self._canary)
