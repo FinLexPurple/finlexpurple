@@ -160,6 +160,10 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
+          # PEP 740 Sigstore build provenance (§28 #2): the action signs the
+          # distributions with the workflow's OIDC identity and uploads the
+          # attestations alongside them. Explicit for intent; this is the default.
+          attestations: true
 
   publish-pypi:
     name: Publish stable release to PyPI
@@ -179,3 +183,7 @@ jobs:
           path: dist/
       - name: Publish to PyPI with Trusted Publishing
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # PEP 740 Sigstore build provenance (§28 #2): signed attestations are
+          # generated from the workflow's OIDC identity and published to PyPI.
+          attestations: true
