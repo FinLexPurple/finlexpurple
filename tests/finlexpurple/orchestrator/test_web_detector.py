@@ -36,6 +36,10 @@ def test_web_detector_sinks_verified_finding_and_persists_empty() -> None:
     sqli = [f for f in sink if f.vulnerability_class == "sqli"]
     assert sqli and sqli[0].status is FindingStatus.VERIFIED
     assert sqli[0].url == "http://t.invalid/search"
+    # Per-finding agent attribution (§16): every sunk finding names its agent,
+    # and web-detection findings are attributed to the 'hunter' detection agent.
+    assert all(f.agent for f in sink)
+    assert sqli[0].agent == "hunter"
 
 
 def test_executor_dispatches_to_injected_web_detector() -> None:
