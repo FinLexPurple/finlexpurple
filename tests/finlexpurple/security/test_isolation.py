@@ -1,8 +1,13 @@
-"""Phase 7 acceptance items 3 & 4: tiered container isolation (decisions.md §27).
+"""Tiered container isolation (decisions.md §27): Phase 7 None/Standard tiers and
+the Phase 20 Maximum (gVisor) tier.
 
-Pure tests cover tier resolution, the hardened docker-run argv construction, the
-hardening guard, and the None-tier host path. The Docker-backed test exercises
-the Standard-tier boundary end to end and is skipped where Docker is absent.
+Pure tests cover tier resolution, the hardened docker-run argv construction (with
+and without the gVisor runsc runtime), the hardening guard, the Maximum-tier
+gVisor-available/fallback/refuse paths, and the None-tier host path. The
+Docker-backed test exercises the Standard-tier boundary end to end and is skipped
+where Docker is absent; gVisor itself cannot run here, so the Maximum tier is
+tested by the argv it builds and its resolution/fallback logic, not a live runsc
+container.
 """
 
 from __future__ import annotations
@@ -66,9 +71,70 @@ def test_assert_hardened_rejects_unsafe_invocations() -> None:
         assert_hardened(["docker", "run", "--network", "host", "img"])
 
 
-def test_maximum_tier_is_deferred_to_phase_20(tmp_path: Path) -> None:
-    with pytest.raises(IsolationError, match="Phase 20"):
+def test_maximum_tier_argv_adds_gvisor_runtime_on_top_of_hardening(tmp_path: Path) -> None:
+    # The Maximum tier selects the runsc runtime; every Standard hardening flag
+    # must still be present (gVisor is added on top, not instead).
+    argv = build_docker_run_argv(
+        "python:3.12-slim",
+        ["python", "-c", "print('x')"],
+        output_dir=tmp_path / "out",
+        runtime="runsc",
+    )
+    assert argv[:5] == ["docker", "run", "--rm", "--runtime", "runsc"]
+    assert "--read-only" in argv and "--cap-drop" in argv and "ALL" in argv
+    assert argv.count("--network") == 1 and "none" in argv
+    # Standard tier (no runtime) must NOT inject --runtime.
+    standard = build_docker_run_argv(
+        "python:3.12-slim", ["python", "-c", "pass"], output_dir=tmp_path / "out2"
+    )
+    assert "--runtime" not in standard
+
+
+def test_maximum_runs_with_runsc_when_gvisor_available(tmp_path: Path, monkeypatch) -> None:
+    # gVisor cannot run in this environment, so stub availability and capture the
+    # argv the tier would hand to docker — proving runsc is selected end to end.
+    monkeypatch.setattr(isolation, "docker_available", lambda: True)
+    monkeypatch.setattr(isolation, "gvisor_available", lambda: True)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        return isolation.ToolResult(argv=tuple(argv), returncode=0, stdout="", stderr="", timed_out=False, duration_seconds=0.0)
+
+    monkeypatch.setattr(isolation, "run_sandboxed", fake_run)
+    run_in_isolation(["python", "-c", "pass"], tier=IsolationTier.MAXIMUM, output_dir=tmp_path / "o")
+    assert captured["argv"][:5] == ["docker", "run", "--rm", "--runtime", "runsc"]
+
+
+def test_maximum_falls_back_to_standard_when_gvisor_absent(tmp_path: Path, monkeypatch, caplog) -> None:
+    # gVisor unavailable (e.g. non-Linux host): fall back to the Standard hardened
+    # container with a clear warning, never silently and never refusing.
+    monkeypatch.setattr(isolation, "docker_available", lambda: True)
+    monkeypatch.setattr(isolation, "gvisor_available", lambda: False)
+    captured: dict[str, list[str]] = {}
+
+    def fake_run(argv, **kwargs):
+        captured["argv"] = list(argv)
+        return isolation.ToolResult(argv=tuple(argv), returncode=0, stdout="", stderr="", timed_out=False, duration_seconds=0.0)
+
+    monkeypatch.setattr(isolation, "run_sandboxed", fake_run)
+    with caplog.at_level("WARNING"):
+        run_in_isolation(["python", "-c", "pass"], tier=IsolationTier.MAXIMUM, output_dir=tmp_path / "o")
+    assert "--runtime" not in captured["argv"]           # fell back to Standard
+    assert "--read-only" in captured["argv"]             # still hardened
+    assert any("gVisor" in r.message for r in caplog.records)
+
+
+def test_maximum_refuses_when_docker_unavailable(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(isolation, "docker_available", lambda: False)
+    with pytest.raises(IsolationUnavailableError, match="Docker is not available"):
         run_in_isolation(["python", "-c", "pass"], tier=IsolationTier.MAXIMUM, output_dir=tmp_path)
+
+
+def test_gvisor_unavailable_off_linux(monkeypatch) -> None:
+    # gVisor is Linux-only; never reported available on macOS/Windows hosts.
+    monkeypatch.setattr(isolation.sys, "platform", "darwin")
+    assert isolation.gvisor_available() is False
 
 
 def test_standard_refuses_when_docker_unavailable(tmp_path: Path, monkeypatch) -> None:
