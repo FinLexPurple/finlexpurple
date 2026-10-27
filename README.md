@@ -104,6 +104,32 @@ finlexpurple verify-bundle ./finlexpurple-reports/<run>/evidence/<id>.bundle.jso
 Run state and reports are written under `./finlexpurple-reports/` (gitignored;
 reports are `0600` on POSIX because they contain real vulnerability detail).
 
+### Hardening controls (default-on)
+
+Every control below is on by default; you widen or narrow it, never switch it
+off:
+
+- **Dollar spend cap** — `MAX_SPEND_USD` (default `5.00`). Every model call is
+  metered against real provider pricing through a single choke point; when the
+  cap is reached the run stops at a safe point and is **resumable** (`resume
+  <run-id>`) — spend carries across the resume. Raise the number for a looser
+  budget.
+- **Iteration / tool-call caps and a per-target request kill-ceiling** — bound a
+  runaway run and the traffic it can send at a target.
+- **Default-deny egress** — a run may reach only the confirmed in-scope target
+  and your configured model provider; everything else is blocked and logged.
+- **Tiered container isolation** — `ISOLATION_TIER` is `none` / `standard`
+  (hardened Docker, the default) / `maximum`. **Maximum** adds the gVisor
+  (`runsc`) runtime on top of every Standard hardening flag; gVisor is
+  Linux-only and installed separately, and where it is absent the Maximum tier
+  logs a warning and falls back to the Standard hardened container rather than
+  silently claiming protection it cannot give. Configure with
+  `finlexpurple setup-isolation`.
+
+Each report finding also **names the agent** that produced it, and
+`finlexpurple --version` prints the semver plus a cosmetic release codename
+(e.g. `0.3.0 (Foothold)`); the codename is never parsed in place of the version.
+
 ### The verify-bundle flow (the credibility differentiator)
 
 A verified finding is backed by a reproducible **evidence bundle**: the exact
