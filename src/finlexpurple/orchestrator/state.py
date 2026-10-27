@@ -35,7 +35,9 @@ class RunState:
     disk: endpoint paths and parameter names, never query values or bodies.
     """
 
-    SCHEMA_VERSION: ClassVar[int] = 1
+    # v2 adds ``spend_usd`` so the dollar spend cap (decisions.md §15) resumes
+    # with the right amount already spent rather than resetting to zero.
+    SCHEMA_VERSION: ClassVar[int] = 2
     STAGES: ClassVar[tuple[str, ...]] = (
         "recon", "plan", "act", "observe", "verify", "report"
     )
@@ -57,6 +59,10 @@ class RunState:
     disallow_paths: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     stop_reason: str | None = None
+    # Cumulative USD spent on model calls this run; the dollar spend cap (§15)
+    # halts the run resumably once it is reached. Kept out of ``counters`` because
+    # that dict is validated to an exact, fixed key set.
+    spend_usd: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping stamped with the schema version."""
@@ -85,7 +91,7 @@ class RunState:
             "parameter_names", "counters", "catalog", "fingerprints",
             "pending_actions", "observed_results", "disallow_paths", "warnings",
         }
-        allowed = required | {"schema_version", "stop_reason"}
+        allowed = required | {"schema_version", "stop_reason", "spend_usd"}
         if not required.issubset(raw) or not set(raw).issubset(allowed):
             raise InvalidRunStateError("Run state is malformed or missing required fields.")
         try:
@@ -98,6 +104,7 @@ class RunState:
                 observed_results=raw["observed_results"],
                 disallow_paths=raw["disallow_paths"], warnings=raw["warnings"],
                 stop_reason=raw.get("stop_reason"),
+                spend_usd=raw.get("spend_usd", 0.0),
             )
         except (KeyError, TypeError) as exc:
             raise InvalidRunStateError("Run state is malformed or missing required fields.") from exc
@@ -121,6 +128,8 @@ class RunState:
             or any(not isinstance(item, str) for item in state.warnings)
             or any(not isinstance(item, str) or "?" in item for item in state.disallow_paths)
             or not isinstance(state.stop_reason, (str, type(None)))
+            or type(state.spend_usd) not in (int, float)
+            or state.spend_usd < 0
         ):
             raise InvalidRunStateError("Run state is malformed or has invalid field values.")
         if not isinstance(state.fingerprints.get("server"), (str, type(None))) or not isinstance(
