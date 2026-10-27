@@ -13,7 +13,6 @@ from urllib.parse import urlsplit
 import typer
 from dotenv import dotenv_values, set_key
 
-from finlexpurple import __version__
 from finlexpurple.agents import invoker as agent_invoker
 from finlexpurple.agents.registry import AgentRequest, get_agent, registered_agents
 from finlexpurple.config import DEFAULT_TELEMETRY_ENDPOINT, Config, ConfigurationError
@@ -50,6 +49,7 @@ from finlexpurple.scope.models import InvalidTargetError, ScopeDefinition, Targe
 from finlexpurple.security import isolation
 from finlexpurple.security.audit_log import AuditLog
 from finlexpurple.security.budget import RateLimiter, RequestBudget
+from finlexpurple.security.budget_guard import BudgetGuard, MeteredProvider
 from finlexpurple.security.egress_policy import EgressPolicy
 from finlexpurple.security.isolation import IsolationTier
 from finlexpurple.security.safe_failure import SafeFailureController
@@ -85,7 +85,9 @@ def root_callback(
 
     configure_logging(json_logs=json_logs)
     if version:
-        typer.echo(__version__)
+        from finlexpurple.release import version_line
+
+        typer.echo(version_line())  # semver + cosmetic codename (§16)
         raise typer.Exit()
     if ctx.invoked_subcommand is None:
         typer.echo(ctx.get_help())
@@ -165,14 +167,23 @@ def _orchestrate_and_report(
 
     # A provider is optional: it only lets the planner reorder actions. If none
     # is configured, or configuration/construction fails, the scan proceeds with
-    # the deterministic ordering rather than aborting.
+    # the deterministic ordering rather than aborting. The dollar spend cap (§15)
+    # is default-on: it is always constructed (even when no paid provider runs),
+    # and when a provider is present it is wrapped in a MeteredProvider so every
+    # model call is charged against the cap with no un-metered path to a paid API.
     provider = None
-    if os.environ.get("LLM_PROVIDER"):
-        try:
-            config = Config.load()
+    max_spend_usd = 5.0
+    try:
+        config = Config.load()
+        max_spend_usd = config.max_spend_usd
+        if os.environ.get("LLM_PROVIDER"):
             provider = create_provider(config)
-        except (ConfigurationError, ValueError, OSError):
-            provider = None
+    except (ConfigurationError, ValueError, OSError):
+        provider = None
+    budget_guard = BudgetGuard(max_spend_usd)
+    if provider is not None:
+        provider = MeteredProvider(provider, budget_guard)
+    typer.echo(f"Spend cap: ${budget_guard.max_spend_usd:.2f} (set MAX_SPEND_USD to change).")
 
     controller = SafeFailureController()
 
@@ -218,6 +229,7 @@ def _orchestrate_and_report(
                 executor=executor,
                 limits=limits,
                 controller=controller,
+                budget_guard=budget_guard,
             )
     except (IterationLimitConfigurationError, OSError, ValueError) as exc:
         typer.echo(f"Orchestration could not continue safely: {exc}", err=True)
@@ -225,6 +237,7 @@ def _orchestrate_and_report(
 
     if final_state.stop_reason:
         typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
+        typer.echo(f"Model spend so far: ${final_state.spend_usd:.4f} of ${budget_guard.max_spend_usd:.2f}.")
         typer.echo(f"Resume with: finlexpurple resume {state_path.parent.name}")
         return
     if origin is None:
