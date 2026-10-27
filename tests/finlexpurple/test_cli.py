@@ -39,14 +39,17 @@ def test_help_lists_registered_subcommands() -> None:
     assert "--json-logs" in output
 
 
-def test_version_prints_current_version() -> None:
+def test_version_prints_semver_and_codename() -> None:
     from finlexpurple import __version__
+    from finlexpurple.release import codename_for
 
     result = runner.invoke(app, ["--version"])
 
     assert result.exit_code == 0
-    # Assert against the package version so this cannot go stale on a bump.
-    assert strip_ansi(result.stdout).strip() == __version__
+    out = strip_ansi(result.stdout).strip()
+    # Canonical semver is present (not replaced), with the cosmetic codename (§16).
+    assert __version__ in out
+    assert codename_for(__version__) in out
 
 
 def test_setup_runs_phase_two_wizard(monkeypatch) -> None:
