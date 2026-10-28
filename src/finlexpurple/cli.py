@@ -22,6 +22,7 @@ from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.bundle import BundleFormatError
 from finlexpurple.evidence.verify import verify_bundle
+from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.gates.authorization import record_attestation
 from finlexpurple.gates.fix_mode import FixModeError, resolve_fix_mode
 from finlexpurple.gates.kill_switch import KillSwitch
@@ -185,9 +186,11 @@ def _orchestrate_and_report(
     # model call is charged against the cap with no un-metered path to a paid API.
     provider = None
     max_spend_usd = 5.0
+    require_human_approval = True  # §3 default-on; only an explicit config disables it
     try:
         config = Config.load()
         max_spend_usd = config.max_spend_usd
+        require_human_approval = config.require_human_approval
         if os.environ.get("LLM_PROVIDER"):
             provider = create_provider(config)
     except (ConfigurationError, ValueError, OSError):
@@ -223,9 +226,27 @@ def _orchestrate_and_report(
             server=state.fingerprints.get("server"),
             technologies=tuple(state.fingerprints.get("technologies", [])),
         )
+        # Price-tampering's verification re-execution is state-changing, so it is
+        # gated (Phase 8). A scan is non-interactive: the default (approval
+        # required) PAUSES the replay and the finding stays [REPORTED]; setting
+        # REQUIRE_HUMAN_APPROVAL=false config-allows a standard-gate (cashier)
+        # re-execution. Teller/Vault stay hard-gated and can never be allowed.
+        gate = ApprovalGate(require_human_approval, interactive=False, audit_log=audit)
+
+        def _charge_confirmer(finding: Finding, value: str) -> bool | None:
+            # Genuine in-scope read-back via the egress-checked prober: re-read the
+            # resource without the tampered input and see whether the manipulated
+            # amount persisted. Never synthesize a charge — if the read-back cannot
+            # be made, return None so the finding stays [REPORTED].
+            try:
+                return value in prober.request("GET", finding.url).text
+            except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
+                return None
+
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
+                gate=gate, charge_confirmer=_charge_confirmer,
             )}
         )
     else:

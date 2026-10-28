@@ -136,6 +136,79 @@ def test_scan_requires_target_option() -> None:
     assert "--target" in strip_ansi(result.output)
 
 
+def test_scan_verifies_price_tampering_end_to_end(tmp_path, monkeypatch) -> None:
+    """A full `scan` of a charged checkout verifies price-tampering and writes a bundle.
+
+    Stubs scope-confirm + recon (recon yields a /checkout?price endpoint on a live
+    local server). With approval config-allowed (REQUIRE_HUMAN_APPROVAL=false, a
+    standard-gate cashier allow) the gated replay runs, the in-scope read-back
+    confirms the persisted tampered price, and the finding ends [VERIFIED] with a
+    signed(=hash-only offline) evidence bundle — the gap Tasks 1-3 close.
+    """
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from pathlib import Path
+    from urllib.parse import parse_qs, urlsplit
+
+    class _Handler(BaseHTTPRequestHandler):
+        persisted = "49.99"
+
+        def log_message(self, *a: object) -> None:
+            return
+
+        def do_GET(self) -> None:
+            query = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            cls = type(self)
+            if "price" not in query:
+                body = f"receipt total={cls.persisted}"  # param-less read-back
+            else:
+                price = query["price"]
+                try:  # a real checkout persists only a numeric price, not a scanner payload
+                    float(price)
+                    cls.persisted = price
+                except ValueError:
+                    pass
+                body = f"order total={cls.persisted}"
+            data = body.encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    base = f"http://{host}:{port}"
+
+    def _recon(*args: object, **kwargs: object):
+        catalog = EndpointCatalog()
+        catalog.add("GET", f"{base}/checkout", parameters={"price"})
+        return SimpleNamespace(
+            catalog=catalog, fingerprint=Fingerprint(server=None, technologies=()),
+            disallow_paths=(), warnings=(),
+        )
+
+    monkeypatch.setattr(
+        "finlexpurple.cli.confirm_scope", lambda target, **kw: SimpleNamespace(first_confirmed_at=None)
+    )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", _recon)
+    monkeypatch.setenv("REQUIRE_HUMAN_APPROVAL", "false")  # standard-gate config-allow for cashier
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.chdir(tmp_path)  # report tree is written under cwd/finlexpurple-reports
+
+    try:
+        result = runner.invoke(app, ["scan", "--target", base], input="y\n")
+        output = strip_ansi(result.output)
+        bundle_count = len(list(Path(tmp_path).rglob("*.bundle.json")))
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert result.exit_code == 0, output
+    assert "1 verified" in output, output          # exactly the price-tampering finding
+    assert bundle_count >= 1, output               # a signed evidence bundle was written
+
+
 def test_scan_resume_revalidates_saved_target_scope_and_skips_recon(tmp_path, monkeypatch) -> None:
     """`scan --resume` re-confirms scope, does not rerun recon, and drives the engine.
 
