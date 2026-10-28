@@ -31,10 +31,12 @@ from urllib.parse import urljoin
 from finlexpurple.detectors import dispatch
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
+from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
+from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 
 
 class StubDetector:
@@ -59,10 +61,15 @@ class WebDetector:
     the run's ``origin`` (the persisted record holds only the path, never query
     values), runs the Phase 10 detectors through a scope-safe prober, then runs
     each finding through the Phase 11 verification engine so it ends
-    ``verified`` or ``reported``. Verified/unverified findings are appended to
-    the caller's ``sink``; the returned observation is **always findings-empty**
-    so the persisted run state keeps no request/response values (the same
-    privacy guarantee the stub path upheld).
+    ``verified`` or ``reported``. It also runs the financial price-tampering
+    check (the one financial class with a deterministic replay): capture is an
+    in-scope detection probe, and its verification *re-execution* is
+    state-changing, so it routes through the injected approval ``gate`` and is
+    confirmed only by the in-scope ``charge_confirmer`` (durable-state read-back)
+    — without a gate it stays ``reported``, exactly as the other unverifiable
+    classes do. Findings are appended to the caller's ``sink``; the returned
+    observation is **always findings-empty** so the persisted run state keeps no
+    request/response values (the same privacy guarantee the stub path upheld).
     """
 
     def __init__(
@@ -73,12 +80,16 @@ class WebDetector:
         sink: MutableSequence[Finding],
         fingerprint: Fingerprint | None = None,
         canary: OutOfBandCanary | None = None,
+        gate: ApprovalGate | None = None,
+        charge_confirmer: ChargeConfirmer | None = None,
     ) -> None:
         self._origin = origin
         self._prober = prober
         self._sink = sink
         self._fingerprint = fingerprint
         self._canary = canary
+        self._gate = gate
+        self._charge_confirmer = charge_confirmer
 
     def run(self, endpoint: dict[str, Any]) -> dict[str, Any]:
         """Detect and verify findings for ``endpoint``; collect them in the sink."""
@@ -100,6 +111,38 @@ class WebDetector:
             # a second IDOR session, an XSS browser) leave that class reported.
             verifier_engine.verify(finding, prober=self._prober, canary=self._canary)
         self._sink.extend(findings)
+
+        # Financial: price-tampering (the one financial class with a replay).
+        # Both the active capture and the verification re-execution send a
+        # tampered request to the target, so the whole interaction is a
+        # state-changing write and is gated (Phase 8) BEFORE any tamper probe is
+        # sent. On a denied / paused / absent gate nothing is sent and the lead
+        # is kept as a passive, name-based [REPORTED] candidate. Attributed to
+        # the 'cashier' agent, so the gate category is standard (cashier); a
+        # Teller/Vault origin would be hard-gated and never config-allowed.
+        # finance/ is imported lazily so orchestrator keeps no finance import.
+        from finlexpurple.finance.payment_tests import price_tampering
+
+        gate_ok = self._gate is not None and self._gate.resolve(GateAction(
+            description=f"price-tampering test (sends a tampered request) against {reconstructed.url}",
+            category="cashier",
+            state_changing=True,
+        )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
+        if gate_ok:
+            price_findings = price_tampering.check([reconstructed], agent="cashier", prober=self._prober)
+            for finding in price_findings:
+                verifier_engine.verify(
+                    finding,
+                    prober=self._prober,
+                    gate=self._gate,
+                    charge_confirmer=self._charge_confirmer,
+                )
+        else:
+            # No gate / approval not granted: send no tamper probe at all; keep
+            # the lead as a passive, name-based candidate (stays [REPORTED]).
+            price_findings = price_tampering.check([reconstructed], agent="cashier")
+        self._sink.extend(price_findings)
+
         # Persisted observation stays findings-empty (privacy guarantee); the
         # real findings live only in the sink / the 0600 report tree.
         return {"findings": []}
