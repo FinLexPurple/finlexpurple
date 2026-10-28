@@ -12,14 +12,17 @@ from __future__ import annotations
 
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
+from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.verifier.replay import (
     cache_poisoning_replay,
     idor_replay,
+    price_tampering_replay,
     sqli_replay,
     ssrf_replay,
     xss_replay,
 )
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
+from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
 from finlexpurple.verifier.status import ReplayResult, status_for
 
@@ -33,13 +36,17 @@ def verify(
     sessions: Sessions | None = None,
     canary: OutOfBandCanary | None = None,
     browser_runner: BrowserRunner | None = None,
+    gate: ApprovalGate | None = None,
+    charge_confirmer: ChargeConfirmer | None = None,
 ) -> Finding:
     """Replay ``finding`` by its class and update its status/verification_log in place.
 
     Collaborators are per class: SQLi needs a prober; IDOR a prober + two
     sessions; SSRF a prober + an out-of-band canary; XSS a headless-browser
-    runner. A missing collaborator or an unknown class leaves the finding
-    ``reported``.
+    runner; price-tampering a prober + an approval ``gate`` (its re-execution is
+    state-changing) + an optional ``charge_confirmer`` (durable-state read-back).
+    A missing collaborator or an unknown class leaves the finding ``reported``;
+    without a ``gate`` a price-tampering finding can never become ``verified``.
     """
 
     vulnerability_class = finding.vulnerability_class
@@ -53,6 +60,8 @@ def verify(
         result = xss_replay.replay(finding, browser_runner)
     elif vulnerability_class == "cache_poisoning":
         result = cache_poisoning_replay.replay(finding)
+    elif vulnerability_class == "price_tampering":
+        result = price_tampering_replay.replay(finding, prober, gate, charge_confirmer)
     else:
         result = ReplayResult(None, f"no replay engine for class {vulnerability_class!r}.")
 
