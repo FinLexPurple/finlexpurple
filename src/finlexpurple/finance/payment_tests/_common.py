@@ -96,3 +96,49 @@ def tampered_finding(
         severity=severity,
         agent=agent,
     )
+
+
+def forged_callback_finding(
+    endpoint: Endpoint,
+    *,
+    descriptor: str,
+    forged_body: str,
+    request_headers: dict[str, str],
+    response: ProbeResponse,
+    severity: Severity,
+    agent: str,
+) -> Finding:
+    """Build a ``reported`` webhook_bypass finding carrying a re-executable forged callback.
+
+    The webhook case is a **POST with a body**, not a query-parameter tamper, so
+    this is the body-carrying counterpart to :func:`tampered_finding`. It records
+    the concrete forged request that was actually sent — the request ``body`` (the
+    forged JSON callback) and the ``request_headers`` as sent (including the
+    deliberately invalid/absent signature) — plus the server's
+    ``response_snapshot``. That is the evidence a later deterministic replay
+    re-sends. ``payload`` is a concrete descriptor of the forgery (so the
+    deterministic ``finding_id`` is stable per endpoint), while the exact bytes to
+    re-send live in ``body``.
+
+    ``expected_signal`` states, in a code-checkable way, the criterion the replay
+    will test: the server accepted the unsigned/invalid-signature callback and
+    (the decisive step) the order was durably marked paid. Acceptance alone is a
+    necessary, not sufficient, proof — the replay owns the full pass/fail — so the
+    status stays ``reported`` here; capture never verifies.
+    """
+
+    return Finding.new(
+        vulnerability_class="webhook_bypass",
+        method=endpoint.method,
+        url=endpoint.url,
+        payload=f"webhook_bypass:{descriptor}",
+        headers=dict(request_headers),
+        body=forged_body,
+        response_snapshot=response.text[:_SNAPSHOT_MAX_CHARS],
+        expected_signal=(
+            "server accepted an unsigned/invalid-signature 'paid' callback (HTTP 2xx); "
+            "reproduced only if an in-scope read-back confirms the order durably flipped to paid"
+        ),
+        severity=severity,
+        agent=agent,
+    )
