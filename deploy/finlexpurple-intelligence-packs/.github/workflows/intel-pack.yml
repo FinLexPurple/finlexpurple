@@ -1,0 +1,82 @@
+# Intelligence-pack publish workflow — Decision 2, Step 2.
+#
+# PLACEMENT: this file belongs at `.github/workflows/intel-pack.yml` in the PUBLIC
+# packs repo `FinLexPurple/finlexpurple-intelligence-packs`. It is kept here, in a
+# non-active `deploy/<repo>/...` path, only so the publisher and the CLI's baked
+# identity pin stay in one source tree (a test asserts they match). It must NOT be
+# placed under this tool repo's own `.github/workflows/` — that would run on the
+# wrong repo's tags and carry the wrong OIDC identity.
+#
+# TRUST MODEL: the private master (mibrahim-O2/Finlex-Intelligence) builds and
+# sanitizes the public-safe `pack.json`, pushes it here, and tags `vX.Y.Z`. This
+# workflow — triggered by that tag — keyless-signs the pack with Sigstore (GitHub
+# Actions OIDC, no stored key) and publishes it as a GitHub Release asset. The
+# signing identity is THIS workflow:
+#   https://github.com/FinLexPurple/finlexpurple-intelligence-packs/.github/workflows/intel-pack.yml@refs/tags/<tag>
+# which is exactly what the CLI pins (config.DEFAULT_PINNED_IDENTITY_REGEXP:
+# exact repo + exact workflow file + tag-refs only; the tag version is allowed to
+# vary). No cross-repo token is used here, and no secret signing key exists.
+
+name: intel-pack-publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Least privilege at the top; the one job grants only what it needs.
+permissions: {}
+
+jobs:
+  sign-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # mint the OIDC token for Sigstore keyless signing
+      contents: write   # create the Release and upload its assets
+    steps:
+      - name: Check out the tagged pack
+        uses: actions/checkout@v4
+
+      - name: Validate the pack is data-only JSON before signing
+        run: |
+          test -f pack.json || { echo "pack.json missing at repo root"; exit 1; }
+          python3 - <<'PY'
+          import json, sys
+          data = json.load(open("pack.json", encoding="utf-8"))
+          if not isinstance(data, dict) or "manifest" not in data or "patterns" not in data:
+              sys.exit("pack.json is not a well-formed data pack (need manifest + patterns)")
+          if not isinstance(data["patterns"], list):
+              sys.exit("pack.json patterns must be a list")
+          print(f"pack.json OK: {len(data['patterns'])} pattern(s)")
+          PY
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: 'v3.1.4'
+
+      - name: Keyless-sign the pack (Sigstore, GitHub Actions OIDC)
+        run: |
+          cosign sign-blob --yes --bundle pack.sig.json pack.json
+          test -s pack.sig.json || { echo "signature bundle was not produced"; exit 1; }
+
+      - name: Self-verify the signature against this workflow's own identity
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          cosign verify-blob \
+            --bundle pack.sig.json \
+            --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/intel-pack.yml@refs/tags/${TAG}" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            pack.json
+
+      - name: Publish the signed pack as a Release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            pack.json pack.sig.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Intelligence pack $TAG" \
+            --notes "Data-only, advisory-only intelligence pack. Keyless-signed by intel-pack.yml; verify with the pinned identity + issuer."
