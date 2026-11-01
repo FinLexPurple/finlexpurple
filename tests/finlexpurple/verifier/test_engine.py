@@ -72,7 +72,7 @@ def test_price_tampering_verified_only_when_charged() -> None:
     charged = engine.verify(_price_tampering(), prober=prober, gate=gate, charge_confirmer=lambda f, v: True)
     assert charged.status is FindingStatus.VERIFIED
     reflected = engine.verify(_price_tampering(), prober=prober, gate=gate, charge_confirmer=lambda f, v: False)
-    assert reflected.status is FindingStatus.REPORTED
+    assert reflected.status is FindingStatus.NOT_REPRODUCED  # confirmed not persisted (never verified)
 
 
 def test_price_tampering_without_gate_stays_reported() -> None:
