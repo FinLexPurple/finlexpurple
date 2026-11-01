@@ -37,6 +37,7 @@ from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
 
 class StubDetector:
@@ -61,13 +62,13 @@ class WebDetector:
     the run's ``origin`` (the persisted record holds only the path, never query
     values), runs the Phase 10 detectors through a scope-safe prober, then runs
     each finding through the Phase 11 verification engine so it ends
-    ``verified`` or ``reported``. It also runs the financial price-tampering
-    check (the one financial class with a deterministic replay): capture is an
-    in-scope detection probe, and its verification *re-execution* is
-    state-changing, so it routes through the injected approval ``gate`` and is
-    confirmed only by the in-scope ``charge_confirmer`` (durable-state read-back)
-    — without a gate it stays ``reported``, exactly as the other unverifiable
-    classes do. Findings are appended to the caller's ``sink``; the returned
+    ``verified`` or ``reported``. It also runs the financial replay specialists —
+    price-tampering and webhook-bypass: capture is an in-scope detection probe,
+    and each verification *re-execution* is state-changing, so it routes through
+    the injected approval ``gate`` and is confirmed only by an in-scope read-back
+    (``charge_confirmer`` for a charged price, ``settlement_confirmer`` for a paid
+    order) — without a gate they stay ``reported``, exactly as the other
+    unverifiable classes do. Findings are appended to the caller's ``sink``; the returned
     observation is **always findings-empty** so the persisted run state keeps no
     request/response values (the same privacy guarantee the stub path upheld).
     """
@@ -82,6 +83,7 @@ class WebDetector:
         canary: OutOfBandCanary | None = None,
         gate: ApprovalGate | None = None,
         charge_confirmer: ChargeConfirmer | None = None,
+        settlement_confirmer: SettlementConfirmer | None = None,
         run_financial: bool = True,
     ) -> None:
         self._origin = origin
@@ -91,6 +93,7 @@ class WebDetector:
         self._canary = canary
         self._gate = gate
         self._charge_confirmer = charge_confirmer
+        self._settlement_confirmer = settlement_confirmer
         # The scan front-door selector (Decision 1) sets this: the financial
         # price-tampering step runs only when the selector chose the 'cashier'
         # specialist for this target, so a non-payment target never gets probed.
@@ -150,6 +153,35 @@ class WebDetector:
                 # the lead as a passive, name-based candidate (stays [REPORTED]).
                 price_findings = price_tampering.check([reconstructed], agent="cashier")
             self._sink.extend(price_findings)
+
+            # Financial: webhook-bypass (the second financial class with a replay).
+            # Only a webhook-like endpoint is probed, and only behind the gate —
+            # forging a callback is a state-changing write, gated BEFORE anything is
+            # sent (same cashier category as price-tampering; a Teller/Vault origin
+            # would be hard-gated). On a denied/paused/absent gate nothing is forged
+            # and the lead is kept as a passive, name-based [REPORTED] candidate.
+            from finlexpurple.finance.payment_tests import webhook_bypass
+
+            if webhook_bypass.looks_like_webhook(reconstructed):
+                webhook_ok = self._gate is not None and self._gate.resolve(GateAction(
+                    description=f"webhook-forgery test (sends a forged unsigned callback) against {reconstructed.url}",
+                    category="cashier",
+                    state_changing=True,
+                )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
+                if webhook_ok:
+                    webhook_findings = webhook_bypass.check(
+                        [reconstructed], agent="cashier", prober=self._prober
+                    )
+                    for finding in webhook_findings:
+                        verifier_engine.verify(
+                            finding,
+                            prober=self._prober,
+                            gate=self._gate,
+                            settlement_confirmer=self._settlement_confirmer,
+                        )
+                else:
+                    webhook_findings = webhook_bypass.check([reconstructed], agent="cashier")
+                self._sink.extend(webhook_findings)
 
         # Persisted observation stays findings-empty (privacy guarantee); the
         # real findings live only in the sink / the 0600 report tree.
