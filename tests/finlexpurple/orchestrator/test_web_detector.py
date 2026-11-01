@@ -104,7 +104,7 @@ def test_scan_reports_price_tampering_when_not_persisted() -> None:
     )
     detector.run(_CHECKOUT)
     pt = [f for f in sink if f.vulnerability_class == "price_tampering"]
-    assert pt and pt[0].status is FindingStatus.REPORTED
+    assert pt and pt[0].status is FindingStatus.NOT_REPRODUCED  # read-back shows not persisted
 
 
 def test_scan_without_gate_leaves_price_tampering_reported() -> None:
