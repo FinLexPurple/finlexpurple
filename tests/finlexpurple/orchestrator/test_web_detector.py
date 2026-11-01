@@ -113,3 +113,15 @@ def test_scan_without_gate_leaves_price_tampering_reported() -> None:
     detector.run(_CHECKOUT)
     pt = [f for f in sink if f.vulnerability_class == "price_tampering"]
     assert pt and pt[0].status is FindingStatus.REPORTED  # no gate -> never verified
+
+
+def test_selector_can_skip_financial_entirely() -> None:
+    # When the front-door selector did not choose 'cashier', run_financial=False:
+    # no tamper probe is sent and no price-tampering finding is produced at all.
+    sink: list[Finding] = []
+    detector = WebDetector(
+        origin="http://t.invalid", prober=_CheckoutProber(persist=True), sink=sink,
+        gate=_approving_gate(), charge_confirmer=lambda f, v: True, run_financial=False,
+    )
+    detector.run(_CHECKOUT)
+    assert [f for f in sink if f.vulnerability_class == "price_tampering"] == []

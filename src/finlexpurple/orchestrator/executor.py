@@ -82,6 +82,7 @@ class WebDetector:
         canary: OutOfBandCanary | None = None,
         gate: ApprovalGate | None = None,
         charge_confirmer: ChargeConfirmer | None = None,
+        run_financial: bool = True,
     ) -> None:
         self._origin = origin
         self._prober = prober
@@ -90,6 +91,10 @@ class WebDetector:
         self._canary = canary
         self._gate = gate
         self._charge_confirmer = charge_confirmer
+        # The scan front-door selector (Decision 1) sets this: the financial
+        # price-tampering step runs only when the selector chose the 'cashier'
+        # specialist for this target, so a non-payment target never gets probed.
+        self._run_financial = run_financial
 
     def run(self, endpoint: dict[str, Any]) -> dict[str, Any]:
         """Detect and verify findings for ``endpoint``; collect them in the sink."""
@@ -121,27 +126,30 @@ class WebDetector:
         # the 'cashier' agent, so the gate category is standard (cashier); a
         # Teller/Vault origin would be hard-gated and never config-allowed.
         # finance/ is imported lazily so orchestrator keeps no finance import.
-        from finlexpurple.finance.payment_tests import price_tampering
+        # Skipped entirely unless the selector chose 'cashier' for this target
+        # (Decision 1): a non-payment target is never probed for price tampering.
+        if self._run_financial:
+            from finlexpurple.finance.payment_tests import price_tampering
 
-        gate_ok = self._gate is not None and self._gate.resolve(GateAction(
-            description=f"price-tampering test (sends a tampered request) against {reconstructed.url}",
-            category="cashier",
-            state_changing=True,
-        )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
-        if gate_ok:
-            price_findings = price_tampering.check([reconstructed], agent="cashier", prober=self._prober)
-            for finding in price_findings:
-                verifier_engine.verify(
-                    finding,
-                    prober=self._prober,
-                    gate=self._gate,
-                    charge_confirmer=self._charge_confirmer,
-                )
-        else:
-            # No gate / approval not granted: send no tamper probe at all; keep
-            # the lead as a passive, name-based candidate (stays [REPORTED]).
-            price_findings = price_tampering.check([reconstructed], agent="cashier")
-        self._sink.extend(price_findings)
+            gate_ok = self._gate is not None and self._gate.resolve(GateAction(
+                description=f"price-tampering test (sends a tampered request) against {reconstructed.url}",
+                category="cashier",
+                state_changing=True,
+            )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
+            if gate_ok:
+                price_findings = price_tampering.check([reconstructed], agent="cashier", prober=self._prober)
+                for finding in price_findings:
+                    verifier_engine.verify(
+                        finding,
+                        prober=self._prober,
+                        gate=self._gate,
+                        charge_confirmer=self._charge_confirmer,
+                    )
+            else:
+                # No gate / approval not granted: send no tamper probe at all; keep
+                # the lead as a passive, name-based candidate (stays [REPORTED]).
+                price_findings = price_tampering.check([reconstructed], agent="cashier")
+            self._sink.extend(price_findings)
 
         # Persisted observation stays findings-empty (privacy guarantee); the
         # real findings live only in the sink / the 0600 report tree.
