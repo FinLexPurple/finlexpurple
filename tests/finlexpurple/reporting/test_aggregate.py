@@ -31,6 +31,23 @@ def test_counts_and_verified_percent_are_exact() -> None:
     assert summary.by_status["human_confirmed"] == 1
 
 
+def test_unit1_statuses_are_non_verified_and_do_not_miscount() -> None:
+    # INCONCLUSIVE / NOT_REPRODUCED / BLOCKED are non-verified: only VERIFIED
+    # counts toward "% verified", and each new status is tallied under its name.
+    findings = [
+        _finding(FindingStatus.VERIFIED, Severity.HIGH, 1),
+        _finding(FindingStatus.NOT_REPRODUCED, Severity.HIGH, 2),
+        _finding(FindingStatus.INCONCLUSIVE, Severity.HIGH, 3),
+        _finding(FindingStatus.BLOCKED, Severity.HIGH, 4),
+    ]
+    summary = summarize(findings)
+    assert summary.verified == 1
+    assert summary.verified_percent == 25.0  # only the VERIFIED one, of four
+    assert summary.by_status["not_reproduced"] == 1
+    assert summary.by_status["inconclusive"] == 1
+    assert summary.by_status["blocked"] == 1
+
+
 def test_empty_findings_do_not_divide_by_zero() -> None:
     summary = summarize([])
     assert summary.total == 0
