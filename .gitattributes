@@ -1,0 +1,5 @@
+# The baseline intelligence pack is verified byte-for-byte against a pinned
+# sha256 (intel/baseline.py BASELINE_SHA256). Force it to stay LF on every
+# platform so a Windows checkout (core.autocrlf=true) cannot rewrite it to CRLF
+# and break that hash. Scoped to the pack data only — no repo-wide normalization.
+src/finlexpurple/intel/baseline/pack.json text eol=lf
