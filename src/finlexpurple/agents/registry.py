@@ -21,8 +21,11 @@ from dataclasses import dataclass
 from finlexpurple.detectors.dispatch import run_relevant
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.verifier import engine as verifier_engine
+from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
 # Requirement vocabulary an agent may declare (what an isolated run needs).
 TARGET = "target"
@@ -39,13 +42,19 @@ class AgentRequest:
 
     ``recon`` maps a target URL to its endpoints and ``prober`` is the scope-safe
     HTTP prober — both injected by the caller (the CLI builds real ones; tests
-    pass fakes), so an agent never reaches outside what it is given.
+    pass fakes), so an agent never reaches outside what it is given. ``gate`` and
+    the two confirmers are the verification collaborators (Unit 3): with them a
+    financial specialist run in isolation reaches ``verified`` exactly as in a
+    scan; without them its findings stay ``reported`` candidates, never verified.
     """
 
     target: str | None = None
     findings: tuple[Finding, ...] = ()
     recon: Callable[[str], list[Endpoint]] | None = None
     prober: Prober | None = None
+    gate: ApprovalGate | None = None
+    charge_confirmer: ChargeConfirmer | None = None
+    settlement_confirmer: SettlementConfirmer | None = None
 
 
 @dataclass(frozen=True)
@@ -152,19 +161,45 @@ def _compass(request: AgentRequest) -> AgentResult:
     )
 
 
-def _cashier(request: AgentRequest) -> AgentResult:
-    """E-commerce payment testing: read-only candidate findings (reported)."""
+def _run_payment_specialist(request: AgentRequest, *, name: str, note: str) -> AgentResult:
+    """Run a standard-gate financial specialist in isolation, reaching VERIFIED like a scan.
+
+    The replay-backed classes (price-tampering, webhook-bypass) go through the
+    SAME gated capture+verify helper the scan path uses, so an isolated run
+    reaches the same status; the remaining read-only surface checks stay passive
+    ``reported`` candidates. Verification needs the injected gate + confirmers;
+    absent them the gate blocks the active probe and findings stay candidates.
+    """
 
     assert request.target is not None and request.recon is not None
     from finlexpurple.finance import payment_tests
+    from finlexpurple.finance.payment_tests import financial_specialist
 
     endpoints = request.recon(request.target)
-    findings = payment_tests.run_all(endpoints, agent="cashier")
-    return AgentResult(
-        "cashier", findings, 0,
-        f"{len(findings)} payment finding(s) across {len(endpoints)} endpoint(s) "
-        "(reported; verification is human-gated)",
+    findings: list[Finding] = []
+    for endpoint in endpoints:
+        findings.extend(financial_specialist.capture_and_verify(
+            endpoint, agent=name, prober=request.prober, gate=request.gate,
+            charge_confirmer=request.charge_confirmer,
+            settlement_confirmer=request.settlement_confirmer,
+        ))
+    # The remaining read-only surface checks stay passive candidates (reported).
+    findings.extend(
+        finding for finding in payment_tests.run_all(endpoints, agent=name)
+        if finding.vulnerability_class not in financial_specialist.REPLAY_BACKED_CLASSES
     )
+    verified = sum(1 for finding in findings if finding.status is FindingStatus.VERIFIED)
+    return AgentResult(
+        name, findings, 0,
+        f"{len(findings)} {note} finding(s) across {len(endpoints)} endpoint(s); "
+        f"{verified} verified by deterministic replay (the rest reported; verification is gated)",
+    )
+
+
+def _cashier(request: AgentRequest) -> AgentResult:
+    """E-commerce payment testing: actively verifies the replay-backed classes in isolation."""
+
+    return _run_payment_specialist(request, name="cashier", note="payment")
 
 
 def _teller(request: AgentRequest) -> AgentResult:
@@ -193,18 +228,9 @@ def _teller(request: AgentRequest) -> AgentResult:
 
 
 def _payment_agent_result(request: AgentRequest, *, name: str, note: str) -> AgentResult:
-    """Run the shared read-only payment suite for a standard-gate financial agent."""
+    """Run a standard-gate financial agent: same gated capture+verify as the scan path."""
 
-    assert request.target is not None and request.recon is not None
-    from finlexpurple.finance import payment_tests
-
-    endpoints = request.recon(request.target)
-    findings = payment_tests.run_all(endpoints, agent=name)
-    return AgentResult(
-        name, findings, 0,
-        f"{len(findings)} {note} finding(s) across {len(endpoints)} endpoint(s) "
-        "(reported; verification is human-gated)",
-    )
+    return _run_payment_specialist(request, name=name, note=note)
 
 
 def _ledger(request: AgentRequest) -> AgentResult:
