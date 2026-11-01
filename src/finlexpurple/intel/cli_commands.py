@@ -4,10 +4,11 @@ Backing logic lives here (testable without Typer); ``cli.py`` mounts ``intel_app
 
 * **show** — summarize the active pack: the verified local cache if present, else
   the shipped baseline (hash-only). Works fully air-gapped.
-* **pull** — fetch + verify + cache the latest signed pack from the configured
-  public channel. The channel URL and the pinned publishing identity come from
-  the environment; **absent them, pull does nothing and says so** (fail-closed) —
-  it never guesses a channel or trusts an unsigned/unpinned download.
+* **pull** — fetch + verify + cache the latest signed pack from the **baked**
+  public channel (URL + pinned publishing-identity regexp), verifying the
+  identity-pinned Sigstore signature. The channel is env-overridable for
+  self-hosting; **clearing** a required override fails closed, and a download is
+  never trusted without a verified pinned-identity signature.
 * **contribute** — build a categorical-only contribution diff from a run's
   report for the user to review and submit **manually**. Nothing is transmitted.
 """
@@ -19,25 +20,16 @@ import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Annotated
-from urllib.parse import urlsplit
 
 import typer
 
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.intel.baseline import load_baseline
+from finlexpurple.intel.config import ConfigError, resolve_pull_channel
 from finlexpurple.intel.contribute import build_contribution
 from finlexpurple.intel.download import fetch_and_cache
 from finlexpurple.intel.pack import Pack, PackValidationError, load_pack
-from finlexpurple.intel.signing import ExpectedIdentity
 from finlexpurple.security.egress_policy import EgressPolicy
-
-# Environment keys that configure the signed-pack channel. These are set once the
-# public Releases channel + publishing identity exist (Step 2); until then pull
-# is not configured and falls back to the shipped baseline.
-_ENV_URL = "INTEL_PACKS_PULL_URL"
-_ENV_SIG_URL = "INTEL_PACKS_SIG_URL"
-_ENV_IDENTITY = "INTEL_PINNED_IDENTITY"
-_ENV_SHA = "INTEL_EXPECTED_SHA256"
 
 _CACHE_PACK = "pack.json"
 
@@ -77,22 +69,17 @@ def summary_text(pack: Pack, source: str) -> str:
 
 
 def pull_text(cache_dir: Path, *, allow_rollback: bool, env: Mapping[str, str] | None = None) -> str:
-    """Fetch+verify+cache from the configured channel, or explain it is not configured."""
+    """Fetch+verify+cache from the baked (or overridden) signed channel; fail closed on a cleared override."""
 
     env = env if env is not None else os.environ
-    url, sig_url = env.get(_ENV_URL), env.get(_ENV_SIG_URL)
-    identity, expected_sha = env.get(_ENV_IDENTITY), env.get(_ENV_SHA)
-    if not (url and sig_url and identity and expected_sha):
-        return (
-            "No signed pack channel is configured yet "
-            f"(set {_ENV_URL}, {_ENV_SIG_URL}, {_ENV_IDENTITY}, {_ENV_SHA} once the public "
-            "Releases channel and publishing identity exist). Using the shipped baseline; "
-            "nothing was downloaded."
-        )
-    host = urlsplit(url).hostname or ""
+    try:
+        channel = resolve_pull_channel(env)
+    except ConfigError as exc:
+        return f"pull: refused — {exc}"
     result = fetch_and_cache(
-        url, sig_url, egress=EgressPolicy([host]), cache_dir=cache_dir,
-        expected_sha256=expected_sha, expected_identity=ExpectedIdentity(identity=identity),
+        channel.pack_url, channel.signature_url,
+        egress=EgressPolicy(list(channel.egress_hosts)), cache_dir=cache_dir,
+        expected_identity=channel.expected_identity, expected_sha256=channel.expected_sha256,
         allow_rollback=allow_rollback,
     )
     return f"pull: {'ok' if result.ok else 'refused'} — {result.reason}"
@@ -126,7 +113,7 @@ def pull(
         bool, typer.Option("--allow-rollback", help="Permit installing an older pack.")
     ] = False,
 ) -> None:
-    """Fetch, verify, and cache the latest signed pack (requires a configured channel)."""
+    """Fetch, verify, and cache the latest signed pack (baked signed channel; env-overridable)."""
 
     typer.echo(pull_text(default_cache_dir(), allow_rollback=allow_rollback))
 
