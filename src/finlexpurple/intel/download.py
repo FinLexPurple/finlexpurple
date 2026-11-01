@@ -2,10 +2,16 @@
 
 Fetches a signed, data-only pack from the public packs repo over **anonymous
 HTTPS** (no token, no auth header), through the **default-deny egress policy**
-(the packs host must be explicitly allow-listed; nothing else opens). The newly
-fetched pack is fully verified **before** it can replace the good cache: a failed
-verification never swaps, and a manifest older than the installed one is rejected
-unless the caller explicitly asks to roll back (recording the reason).
+(the packs host must be explicitly allow-listed; nothing else opens). Redirects
+are followed manually and the egress policy is re-checked on **every hop**
+(initial URL and each ``Location``), so a redirect to a host that is not
+allow-listed — e.g. a GitHub Release asset that 302s to a CDN host — fails
+closed rather than slipping past the allow-list.
+
+The newly fetched pack is fully verified **before** it can replace the good
+cache: a failed verification never swaps, and a manifest older than the installed
+one is rejected unless the caller explicitly asks to roll back (recording the
+reason).
 
 The CLI holds **no credential** for the public or the private repo. The transport
 and the signature-verify backend are injectable so tests exercise every path
@@ -33,6 +39,7 @@ Transport = Callable[[str], bytes]
 _CACHE_PACK = "pack.json"
 _CACHE_SIG = "pack.sig.json"
 _TIMEOUT_SECONDS = 30.0
+_MAX_REDIRECTS = 5
 
 
 @dataclass(frozen=True)
@@ -46,14 +53,23 @@ class DownloadResult:
 
 
 def _default_transport(egress: EgressPolicy) -> Transport:
-    """An anonymous HTTPS GET that checks egress first and sends no credentials."""
+    """An anonymous HTTPS GET that egress-checks every hop and sends no credentials."""
 
     def transport(url: str) -> bytes:
-        egress.check_url(url)  # default-deny: out-of-scope host raises before any socket opens
+        current = url
         with httpx.Client(follow_redirects=False, trust_env=False, timeout=_TIMEOUT_SECONDS) as client:
-            response = client.get(url)  # no auth header is ever added
-            response.raise_for_status()
-            return response.content
+            for _ in range(_MAX_REDIRECTS + 1):
+                egress.check_url(current)  # default-deny on EVERY hop, redirect targets included
+                response = client.get(current)  # no auth header is ever added
+                if response.is_redirect:
+                    location = response.headers.get("location")
+                    if not location:
+                        raise httpx.HTTPError(f"redirect from {current} had no Location header")
+                    current = str(response.url.join(location))
+                    continue
+                response.raise_for_status()
+                return response.content
+        raise httpx.HTTPError(f"too many redirects (>{_MAX_REDIRECTS}) fetching {url}")
 
     return transport
 
@@ -76,8 +92,8 @@ def fetch_and_cache(
     *,
     egress: EgressPolicy,
     cache_dir: Path,
-    expected_sha256: str,
     expected_identity: ExpectedIdentity | None,
+    expected_sha256: str | None = None,
     transport: Transport | None = None,
     verify_backend: CosignVerifyBackend | None = None,
     allow_rollback: bool = False,
@@ -87,7 +103,10 @@ def fetch_and_cache(
     Order matters for safety: fetch over egress-checked anonymous HTTPS, verify
     the bytes + the identity-pinned signature in a temp dir, check rollback, and
     **only** if everything passes replace the cache atomically with ``os.replace``.
-    Any failure returns ``ok=False`` and leaves the existing good cache untouched.
+    A downloaded pack always *requires* a verified identity-pinned signature; the
+    cosign signature covers the exact bytes, so ``expected_sha256`` is an optional
+    extra pin (when given it must match). Any failure returns ``ok=False`` and
+    leaves the existing good cache untouched.
     """
 
     fetch = transport if transport is not None else _default_transport(egress)
