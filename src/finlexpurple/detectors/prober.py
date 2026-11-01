@@ -31,7 +31,12 @@ class ProbeResponse:
 
 
 class Prober(Protocol):
-    """Sends one probe request and returns a :class:`ProbeResponse`."""
+    """Sends one probe request and returns a :class:`ProbeResponse`.
+
+    ``body`` carries a raw request body for methods that need one (a forged
+    webhook callback, for example). It is additive and defaults to ``None`` (no
+    body), so query-only callers are unaffected.
+    """
 
     def request(
         self,
@@ -40,6 +45,7 @@ class Prober(Protocol):
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        body: str | None = None,
     ) -> ProbeResponse:
         ...
 
@@ -72,6 +78,7 @@ class HttpProber:
         *,
         params: dict[str, str] | None = None,
         headers: dict[str, str] | None = None,
+        body: str | None = None,
     ) -> ProbeResponse:
         self._egress.check_url(url)  # default-deny: out-of-scope raises before sending
         if self._budget is not None:
@@ -79,7 +86,7 @@ class HttpProber:
         if self._rate is not None:
             self._rate.acquire()
         with httpx.Client(follow_redirects=False, trust_env=False, timeout=self._timeout) as client:
-            response = client.request(method.upper(), url, params=params, headers=headers)
+            response = client.request(method.upper(), url, params=params, headers=headers, content=body)
             body = response.text[:_MAX_BODY_BYTES]
             lowered = {key.lower(): value for key, value in response.headers.items()}
             return ProbeResponse(status_code=response.status_code, headers=lowered, text=body)
