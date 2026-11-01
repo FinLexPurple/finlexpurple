@@ -32,11 +32,24 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class FindingStatus(str, Enum):
-    """The three states a finding may hold (decisions.md §6, Layer 3)."""
+    """The states a finding may hold (decisions.md §6, Layer 3).
+
+    ``REPORTED``/``VERIFIED``/``HUMAN_CONFIRMED`` are the original three. Phase 18
+    delegation (Unit 1) adds three precise **non-verified** outcomes of a
+    deterministic replay, so the product can say *which* non-verified state a
+    finding is in instead of collapsing everything to ``REPORTED``. None of the
+    three is a clean bill of health, and only ``VERIFIED`` means independently
+    reproduced — reachable solely via ``verifier.status.status_for`` on a
+    reproduced replay.
+    """
 
     REPORTED = "reported"
     VERIFIED = "verified"
     HUMAN_CONFIRMED = "human_confirmed"
+    # Added in Unit 1 (additive; never produced by Finding.new, only by the verifier):
+    INCONCLUSIVE = "inconclusive"      # replayed, but durable impact could not be confirmed
+    NOT_REPRODUCED = "not_reproduced"  # replayed and did NOT reproduce (NOT "vulnerability absent")
+    BLOCKED = "blocked"                # replay was blocked by the approval gate and did not run
 
 
 class Severity(str, Enum):
