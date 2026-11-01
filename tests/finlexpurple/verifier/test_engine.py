@@ -82,6 +82,37 @@ def test_price_tampering_without_gate_stays_reported() -> None:
     assert "approval gate" in (finding.verification_log or "")
 
 
+class _WebhookProber:
+    def __init__(self, status: int) -> None:
+        self._status = status
+
+    def request(self, method, url, *, params=None, headers=None, body=None) -> ProbeResponse:
+        return ProbeResponse(self._status, {}, "received")
+
+
+def _webhook() -> Finding:
+    return Finding.new(
+        vulnerability_class="webhook_bypass", method="POST", url="http://t/payment/webhook",
+        payload="webhook_bypass:forged", body='{"status": "paid"}', agent="cashier",
+    )
+
+
+def test_webhook_bypass_verified_only_when_settlement_confirmed() -> None:
+    gate = ApprovalGate(True, interactive=True, confirm_fn=lambda _p: True)
+    verified = engine.verify(_webhook(), prober=_WebhookProber(200), gate=gate, settlement_confirmer=lambda f: True)
+    assert verified.status is FindingStatus.VERIFIED
+    inconclusive = engine.verify(_webhook(), prober=_WebhookProber(200), gate=gate, settlement_confirmer=None)
+    assert inconclusive.status is FindingStatus.INCONCLUSIVE
+    rejected = engine.verify(_webhook(), prober=_WebhookProber(403), gate=gate, settlement_confirmer=lambda f: True)
+    assert rejected.status is FindingStatus.NOT_REPRODUCED
+
+
+def test_webhook_bypass_without_gate_stays_reported() -> None:
+    finding = engine.verify(_webhook(), prober=_WebhookProber(200))
+    assert finding.status is FindingStatus.REPORTED
+    assert "approval gate" in (finding.verification_log or "")
+
+
 def test_unknown_and_cache_classes_stay_reported() -> None:
     unknown = engine.verify(Finding.new(vulnerability_class="auth_misconfig", method="GET", url="u", payload="x"))
     assert unknown.status is FindingStatus.REPORTED and "no replay engine" in (unknown.verification_log or "")
