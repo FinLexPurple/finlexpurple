@@ -56,6 +56,7 @@ from finlexpurple.security.budget_guard import BudgetGuard, MeteredProvider
 from finlexpurple.security.egress_policy import EgressPolicy
 from finlexpurple.security.isolation import IsolationTier
 from finlexpurple.security.safe_failure import SafeFailureController
+from finlexpurple.selector.selector import select as select_specialists
 from finlexpurple.telemetry import cli_commands as telemetry_cli
 from finlexpurple.telemetry import collector as telemetry_collector
 from finlexpurple.telemetry import feedback as telemetry_feedback
@@ -226,6 +227,37 @@ def _orchestrate_and_report(
             server=state.fingerprints.get("server"),
             technologies=tuple(state.fingerprints.get("technologies", [])),
         )
+        # Scan front-door selector (Decision 1): one relevance pass over the fixed
+        # registry decides which specialists are worth running, from LOCAL triage
+        # text only (fingerprint + endpoint paths/param names — never bodies). The
+        # live scan uses the zero-token deterministic selector (provider=None):
+        # the bounded LLM pass is implemented and unit-tested but its live call
+        # stays deferred so a spend-cap stop keeps its halt semantics (the
+        # SpendBudgetExceededError invariant), which a selector-level fallback
+        # would weaken.
+        corpus_parts = [str(state.fingerprints.get("server") or "")]
+        corpus_parts += [str(tech) for tech in state.fingerprints.get("technologies", [])]
+        for record in state.catalog:
+            corpus_parts.append(str(record.get("path", "")))
+            corpus_parts += [str(name) for name in record.get("parameter_names", [])]
+        selection = select_specialists("\n".join(corpus_parts), state.catalog, provider=None,
+                                       fingerprint=fingerprint)
+        run_financial = "cashier" in selection.agents
+        typer.echo(
+            f"Selector: {', '.join(selection.agents) or 'none'} "
+            f"(relevance via {selection.source})."
+        )
+        for gap in selection.gaps:
+            typer.echo(
+                f"Capability gap: no registered specialist for {gap.technology} "
+                f"({gap.vuln_class}) — a human must author and register one."
+            )
+        audit.record(
+            "selector_selection",
+            agents=list(selection.agents),
+            source=selection.source,
+            capability_gaps=[gap.technology for gap in selection.gaps],
+        )
         # Price-tampering's verification re-execution is state-changing, so it is
         # gated (Phase 8). A scan is non-interactive: the default (approval
         # required) PAUSES the replay and the finding stays [REPORTED]; setting
@@ -246,7 +278,7 @@ def _orchestrate_and_report(
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
-                gate=gate, charge_confirmer=_charge_confirmer,
+                gate=gate, charge_confirmer=_charge_confirmer, run_financial=run_financial,
             )}
         )
     else:

@@ -209,6 +209,57 @@ def test_scan_verifies_price_tampering_end_to_end(tmp_path, monkeypatch) -> None
     assert bundle_count >= 1, output               # a signed evidence bundle was written
 
 
+def test_scan_selector_skips_nonpayment_and_surfaces_capability_gap(tmp_path, monkeypatch) -> None:
+    """The front-door selector does not pick 'cashier' for a non-payment target and
+    surfaces a capability gap for an uncovered technology (graphql)."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class _Handler(BaseHTTPRequestHandler):
+        def log_message(self, *a: object) -> None:
+            return
+
+        def do_GET(self) -> None:
+            body = b"<html>ok</html>"
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address
+    base = f"http://{host}:{port}"
+
+    def _recon(*args: object, **kwargs: object):
+        catalog = EndpointCatalog()
+        catalog.add("GET", f"{base}/graphql", parameters=set())  # uncovered tech, no price param
+        return SimpleNamespace(
+            catalog=catalog, fingerprint=Fingerprint(server=None, technologies=()),
+            disallow_paths=(), warnings=(),
+        )
+
+    monkeypatch.setattr(
+        "finlexpurple.cli.confirm_scope", lambda target, **kw: SimpleNamespace(first_confirmed_at=None)
+    )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", _recon)
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        result = runner.invoke(app, ["scan", "--target", base], input="y\n")
+        output = strip_ansi(result.output)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert result.exit_code == 0, output
+    assert "Selector:" in output, output
+    assert "cashier" not in output, output          # non-payment target -> cashier not selected
+    assert "Capability gap" in output and "graphql" in output, output
+    assert "0 verified" in output, output           # no price-tampering ran
+
+
 def test_scan_resume_revalidates_saved_target_scope_and_skips_recon(tmp_path, monkeypatch) -> None:
     """`scan --resume` re-confirms scope, does not rerun recon, and drives the engine.
 
