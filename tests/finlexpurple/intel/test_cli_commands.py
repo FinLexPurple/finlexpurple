@@ -38,9 +38,31 @@ def test_active_pack_prefers_valid_cache(tmp_path) -> None:
     assert "cached" in source and pack.manifest.version == "cached-1"
 
 
-def test_pull_is_not_configured_by_default() -> None:
-    message = ic.pull_text(ic.default_cache_dir(), allow_rollback=False, env={})
-    assert "No signed pack channel is configured yet" in message
+def test_pull_wires_the_baked_channel(monkeypatch, tmp_path) -> None:
+    from finlexpurple.intel import config
+
+    captured = {}
+
+    def fake_fetch(pack_url, signature_url, **kwargs):
+        captured["pack_url"] = pack_url
+        captured["kwargs"] = kwargs
+        from finlexpurple.intel.download import DownloadResult
+        return DownloadResult(True, tmp_path / "pack.json", "v1", "verified and cached")
+
+    monkeypatch.setattr(ic, "fetch_and_cache", fake_fetch)
+    message = ic.pull_text(tmp_path, allow_rollback=False, env={})
+    assert "pull: ok" in message
+    assert captured["pack_url"] == config.DEFAULT_PACKS_URL
+    identity = captured["kwargs"]["expected_identity"]
+    assert identity.identity_regexp == config.DEFAULT_PINNED_IDENTITY_REGEXP  # baked regexp pin
+    assert captured["kwargs"]["expected_sha256"] is None  # no extra pin out of the box
+
+
+def test_pull_fails_closed_when_identity_cleared() -> None:
+    from finlexpurple.intel import config
+
+    message = ic.pull_text(ic.default_cache_dir(), allow_rollback=False, env={config.ENV_IDENTITY: ""})
+    assert "pull: refused" in message and "fail-closed" in message
 
 
 def test_contribution_text_is_categorical_only(tmp_path) -> None:
