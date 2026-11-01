@@ -129,6 +129,12 @@ def test_json_log_option_is_global_for_subcommands(monkeypatch) -> None:
     assert seen == [True, True, True]
 
 
+def test_intel_show_is_mounted_on_the_app() -> None:
+    result = runner.invoke(app, ["intel", "show"])
+    assert result.exit_code == 0, result.output
+    assert "Active intelligence pack" in strip_ansi(result.output)
+
+
 def test_scan_requires_target_option() -> None:
     result = runner.invoke(app, ["scan"])
 

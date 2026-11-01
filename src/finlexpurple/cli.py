@@ -30,6 +30,7 @@ from finlexpurple.hardware.detect import detect_hardware
 from finlexpurple.hardware.doctor import format_facts
 from finlexpurple.hardware.profiles import hardware_profile, profile_names
 from finlexpurple.hardware.wizard import run_setup
+from finlexpurple.intel import cli_commands as intel_cli
 from finlexpurple.logging_setup import configure_logging
 from finlexpurple.orchestrator.engine import run as run_orchestration
 from finlexpurple.orchestrator.engine import run_id_for_resume, state_from_recon
@@ -837,6 +838,7 @@ def run_agent(
 
 app.add_typer(telemetry_app, name="telemetry")
 app.add_typer(agents_app, name="agents")
+app.add_typer(intel_cli.intel_app, name="intel")
 
 
 def _is_top_level_help(argv: list[str]) -> bool:
