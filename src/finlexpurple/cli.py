@@ -819,6 +819,18 @@ def run_agent(
     request_delay: Annotated[
         float, typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests.")
     ] = 0.5,
+    order_status_url: Annotated[
+        str | None,
+        typer.Option(
+            "--order-status-url",
+            envvar="FLP_ORDER_STATUS_URL",
+            help=(
+                "In-scope order-status oracle URL for webhook-bypass settlement confirmation; "
+                "may contain a literal {order_id} placeholder. Without it, a forged callback "
+                "stays INCONCLUSIVE (never VERIFIED), since durable paid-state cannot be read."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Run one named agent in isolation (fewer LLM calls than a full scan)."""
 
@@ -895,10 +907,10 @@ def run_agent(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
             return None
 
-    # Settlement read-back from the operator-provided order-status oracle (env
-    # FLP_ORDER_STATUS_URL for the isolated agent path); absent one it stays
-    # INCONCLUSIVE, never VERIFIED.
-    _settlement_confirmer = _settlement_confirmer_for(prober, os.environ.get("FLP_ORDER_STATUS_URL"))
+    # Settlement read-back from the operator-provided order-status oracle
+    # (--order-status-url, or its FLP_ORDER_STATUS_URL env fallback via typer);
+    # absent one it stays INCONCLUSIVE, never VERIFIED.
+    _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
 
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
