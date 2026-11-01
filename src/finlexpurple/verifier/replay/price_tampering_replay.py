@@ -2,15 +2,20 @@
 
 Re-executes a captured price-tampering finding's tampered request and decides, by
 deterministic code over the re-executed evidence, whether the server actually
-honored the manipulated price in durable state:
+honored the manipulated price in durable state. Unit 1 surfaces the precise
+outcome (previously all non-charged cases collapsed to REPORTED):
 
-* ``reproduced=True`` — the tampered amount is confirmed charged / persisted
+* ``REPRODUCED`` — the tampered amount is confirmed charged / persisted
   server-side (an independent in-scope read-back shows it recorded). -> VERIFIED
-* ``reproduced=False`` — the server merely reflected the tampered amount in its
-  immediate response but durable state could not be confirmed (the reflection-only
-  fallback), or the server rejected / recomputed the correct price. -> REPORTED
-* ``reproduced=None`` — the replay could not run: no prober / gate, a payload that
-  is not a concrete ``param=value``, or approval was not granted. -> REPORTED
+* ``NOT_REPRODUCED`` — the server rejected / recomputed the correct price, or the
+  read-back confirms the tampered amount was **not** persisted. (Not a clean bill
+  of health — only that this replay did not reproduce it.)
+* ``INCONCLUSIVE`` — the tampered amount was reflected in the immediate response
+  but durable state could not be confirmed (no read-back, or it could not tell).
+* ``BLOCKED`` — approval for the state-changing re-execution was not granted, so
+  nothing ran.
+* ``NO_ENGINE`` — the replay could not run at all: no prober / gate, or a payload
+  that is not a concrete ``param=value``. -> REPORTED
 
 Re-executing a tampered request is a state-changing action, so it always routes
 through the Phase 8 approval gate first and proceeds only when the gate approves
@@ -27,7 +32,7 @@ from collections.abc import Callable
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome
-from finlexpurple.verifier.status import ReplayResult
+from finlexpurple.verifier.status import ReplayOutcome, ReplayResult
 
 # Given the finding and the tampered value, report whether the server durably
 # recorded that value (True), confirmed it did NOT (False), or cannot be confirmed
@@ -56,7 +61,8 @@ def replay(
 
     if prober is None or gate is None:
         return ReplayResult(
-            None, "price-tampering replay requires a prober and an approval gate; not provided."
+            None, "price-tampering replay requires a prober and an approval gate; not provided.",
+            outcome=ReplayOutcome.NO_ENGINE,
         )
 
     param, sep, value = finding.payload.partition("=")
@@ -64,6 +70,7 @@ def replay(
         return ReplayResult(
             None,
             f"price-tampering replay needs a concrete param=value payload; got {finding.payload!r}.",
+            outcome=ReplayOutcome.NO_ENGINE,
         )
 
     category = (finding.agent or _DEFAULT_CATEGORY).strip().lower()
@@ -76,7 +83,8 @@ def replay(
         return ReplayResult(
             None,
             f"not replayed: approval not granted for a state-changing re-execution "
-            f"(gate outcome: {outcome.value}); finding stays reported.",
+            f"(gate outcome: {outcome.value}); replay blocked.",
+            outcome=ReplayOutcome.BLOCKED,
         )
 
     response = prober.request(
@@ -87,15 +95,18 @@ def replay(
             False,
             f"re-executed {finding.payload!r}; server did not honor the tampered price "
             "(rejected/recomputed) — not reproduced.",
+            outcome=ReplayOutcome.NOT_REPRODUCED,
         )
 
     # The tampered value was reflected. VERIFIED requires a confirmed durable
-    # state-change — reflection alone is never sufficient.
+    # state-change — reflection alone is never sufficient; without a confirmed
+    # durable charge the result is inconclusive, never verified.
     if charge_confirmer is None:
         return ReplayResult(
-            False,
-            f"re-executed {finding.payload!r}; tampered price reflected in the response but "
-            "server-side state could not be confirmed (reflection-only) — not reproduced.",
+            None,
+            f"re-executed {finding.payload!r}; tampered price reflected in the response but no "
+            "durable-state read-back was available to confirm it — inconclusive.",
+            outcome=ReplayOutcome.INCONCLUSIVE,
         )
     charged = charge_confirmer(finding, value)
     if charged is True:
@@ -103,15 +114,18 @@ def replay(
             True,
             f"re-executed {finding.payload!r}; tampered price {value!r} confirmed "
             "charged/persisted server-side — exploit reproduced.",
+            outcome=ReplayOutcome.REPRODUCED,
         )
     if charged is False:
         return ReplayResult(
             False,
-            f"re-executed {finding.payload!r}; tampered price reflected but server-side state "
-            "shows it was not persisted (reflection-only) — not reproduced.",
+            f"re-executed {finding.payload!r}; tampered price reflected but the in-scope read-back "
+            "shows it was not persisted in durable state — not reproduced.",
+            outcome=ReplayOutcome.NOT_REPRODUCED,
         )
     return ReplayResult(
-        False,
-        f"re-executed {finding.payload!r}; tampered price reflected but server-side state could "
-        "not be confirmed (reflection-only) — not reproduced.",
+        None,
+        f"re-executed {finding.payload!r}; tampered price reflected but durable state could "
+        "not be confirmed by the read-back — inconclusive.",
+        outcome=ReplayOutcome.INCONCLUSIVE,
     )
