@@ -22,10 +22,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
 
+from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.verify import verify_bundle
-from finlexpurple.finance.payment_tests import webhook_bypass
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.orchestrator.executor import WebDetector
 from finlexpurple.recon.endpoint_catalog import Endpoint
@@ -63,8 +63,10 @@ class _MultiSurfaceVulnApp(BaseHTTPRequestHandler):
             self._send(f"total={query['price']}")
         elif parts.path == "/checkout":
             self._send(f"receipt total={type(self).persisted_price}")
-        elif parts.path == "/orders/status":
-            self._send(json.dumps(type(self).orders))
+        elif parts.path.startswith("/orders/"):  # a SEPARATE per-order status oracle
+            order_id = parts.path.rsplit("/", 1)[-1]
+            status = type(self).orders.get(order_id, "pending")
+            self._send(f'{{"order_id": "{order_id}", "status": "{status}"}}')
         else:
             self._send("ok")
 
@@ -108,11 +110,9 @@ def test_full_delegation_flow_end_to_end(tmp_path) -> None:
         def charge(finding: Finding, value: str) -> bool | None:
             return value in prober.request("GET", finding.url).text
 
-        def settle(finding: Finding) -> bool | None:
-            text = prober.request("GET", f"{base}/orders/status").text
-            if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
-                return True
-            return None
+        # Settlement is confirmed from a SEPARATE order-status oracle (the real
+        # CLI confirmer), not by re-reading the webhook endpoint.
+        settle = _settlement_confirmer_for(prober, f"{base}/orders/{{order_id}}")
 
         sink: list[Finding] = []
         detector = WebDetector(
