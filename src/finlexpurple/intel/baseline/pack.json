@@ -1,0 +1,33 @@
+{
+  "manifest": {
+    "created": "2026-11-01T00:00:00Z",
+    "files": [],
+    "min_client_version": "0.3.0",
+    "previous_version": null,
+    "schema_version": 1,
+    "signature_ref": null,
+    "version": "0.0.1-baseline"
+  },
+  "patterns": [
+    {
+      "content_hash": "sha256:d89519f481d9545571fef01e85e9ea11b13aae96e6f9a1033f1e7d0da9a4e54c",
+      "fingerprint": "stripe-checkout",
+      "ordered_agents": [
+        "hunter",
+        "cashier"
+      ],
+      "provenance": "lab",
+      "reproduced_strategy": "price-tampering reproduced via charged server-side read-back"
+    },
+    {
+      "content_hash": "sha256:7b9eb6ef4baefcdac2e9eadf701a513dff68845778d2da1ea9056e5d85604ff2",
+      "fingerprint": "generic-checkout",
+      "ordered_agents": [
+        "hunter",
+        "cashier"
+      ],
+      "provenance": "lab",
+      "reproduced_strategy": "price-tampering candidate on a checkout/price surface"
+    }
+  ]
+}
