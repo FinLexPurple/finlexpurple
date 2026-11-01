@@ -24,6 +24,22 @@ from finlexpurple.finance import gateway_profiles
 # least one endpoint; the financial specialist (if any) comes from Compass.
 _WEB_AGENT = "hunter"
 
+# Payment-shaped markers: when Compass recognizes no specific gateway SDK but the
+# corpus shows a checkout/price surface, the e-commerce specialist ('cashier') is
+# still relevant — this aligns the front door with where the price-tampering
+# check actually fires (detectors/dispatch + finance/payment_tests/price_tampering).
+_PAYMENT_MARKERS = (
+    "price", "amount", "subtotal", "grandtotal", "/checkout", "/cart",
+    "/pay", "/payment", "coupon", "/order", "/invoice", "/refund",
+)
+
+
+def _looks_like_payment(corpus: str) -> bool:
+    """True if the corpus shows a checkout/price surface with no recognized gateway."""
+
+    lowered = corpus.lower()
+    return any(marker in lowered for marker in _PAYMENT_MARKERS)
+
 
 def relevant_agents(
     corpus: str, endpoints: Sequence[object], fingerprint: object | None = None
@@ -43,6 +59,11 @@ def relevant_agents(
     if endpoints:
         selected.append(_WEB_AGENT)
     specialist = gateway_profiles.recommend_specialist(gateway_profiles.identify_gateways(corpus))
+    if specialist is None and _looks_like_payment(corpus):
+        # A checkout/price surface with no recognized gateway SDK is still an
+        # e-commerce payment target: the 'cashier' specialist (default standard
+        # gate) owns price tampering and the other payment checks.
+        specialist = "cashier"
     if specialist is not None:
         selected.append(specialist)
     # De-duplicate (order-preserving) and keep only names the registry actually has.

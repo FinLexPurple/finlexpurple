@@ -22,6 +22,11 @@ def test_plain_site_with_endpoints_selects_web_only() -> None:
     assert relevant_agents("GET /about\nServer: nginx", _ENDPOINTS) == ["hunter"]
 
 
+def test_payment_shaped_without_gateway_selects_cashier() -> None:
+    # A checkout/price surface with no recognized gateway SDK is still e-commerce.
+    assert relevant_agents("GET /checkout\nparam: price", _ENDPOINTS) == ["hunter", "cashier"]
+
+
 def test_no_endpoints_no_gateway_selects_nothing() -> None:
     assert relevant_agents("Server: nginx", []) == []
 
