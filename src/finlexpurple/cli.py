@@ -840,7 +840,38 @@ def run_agent(
     def _recon(url: str) -> list[Endpoint]:
         return list(run_recon(confirmed_scope, url, request_delay=request_delay).catalog.endpoints)
 
-    request = AgentRequest(target=normalized.canonical, recon=_recon, prober=prober)
+    # Verification collaborators, so a financial specialist run in isolation reaches
+    # VERIFIED exactly as in a scan: the same non-interactive gate policy (a default
+    # run PAUSES the state-changing re-execution; REQUIRE_HUMAN_APPROVAL=false
+    # config-allows a standard-gate agent, while Teller/Vault stay hard-gated) and
+    # the same in-scope read-backs, which never synthesize a signal.
+    require_human_approval = True
+    try:
+        require_human_approval = Config.load().require_human_approval
+    except (ConfigurationError, ValueError, OSError):
+        require_human_approval = True
+    gate = ApprovalGate(require_human_approval, interactive=False, audit_log=audit)
+
+    def _charge_confirmer(finding: Finding, value: str) -> bool | None:
+        try:
+            return value in prober.request("GET", finding.url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
+            return None
+
+    def _settlement_confirmer(finding: Finding) -> bool | None:
+        from finlexpurple.finance.payment_tests import webhook_bypass
+        try:
+            text = prober.request("GET", finding.url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable
+            return None
+        if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
+            return True
+        return None
+
+    request = AgentRequest(
+        target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
+        charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
+    )
     try:
         result = agent_invoker.invoke(resolved, request)
     except (ReconError, OutOfScopeError) as exc:
