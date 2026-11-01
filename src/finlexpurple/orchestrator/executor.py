@@ -31,7 +31,7 @@ from urllib.parse import urljoin
 from finlexpurple.detectors import dispatch
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
-from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome
+from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.verifier import engine as verifier_engine
@@ -120,68 +120,23 @@ class WebDetector:
             verifier_engine.verify(finding, prober=self._prober, canary=self._canary)
         self._sink.extend(findings)
 
-        # Financial: price-tampering (the one financial class with a replay).
-        # Both the active capture and the verification re-execution send a
-        # tampered request to the target, so the whole interaction is a
-        # state-changing write and is gated (Phase 8) BEFORE any tamper probe is
-        # sent. On a denied / paused / absent gate nothing is sent and the lead
-        # is kept as a passive, name-based [REPORTED] candidate. Attributed to
-        # the 'cashier' agent, so the gate category is standard (cashier); a
-        # Teller/Vault origin would be hard-gated and never config-allowed.
-        # finance/ is imported lazily so orchestrator keeps no finance import.
-        # Skipped entirely unless the selector chose 'cashier' for this target
-        # (Decision 1): a non-payment target is never probed for price tampering.
+        # Financial: the replay-backed classes (price-tampering, webhook-bypass).
+        # Capture actively sends a state-changing probe (a tampered request / a
+        # forged callback), so it is gated (Phase 8) BEFORE anything is sent; on a
+        # denied/paused/absent gate nothing is sent and the lead stays a passive,
+        # name-based [REPORTED] candidate. This is the SAME helper the isolated
+        # cashier agent uses (agents.registry), so a scan and a `run --agent cashier`
+        # reach identical statuses. Attributed to 'cashier' (standard gate); a
+        # Teller/Vault category would be hard-gated. finance/ is imported lazily so
+        # orchestrator keeps no finance import. Skipped entirely unless the selector
+        # chose 'cashier' for this target (Decision 1).
         if self._run_financial:
-            from finlexpurple.finance.payment_tests import price_tampering
+            from finlexpurple.finance.payment_tests import financial_specialist
 
-            gate_ok = self._gate is not None and self._gate.resolve(GateAction(
-                description=f"price-tampering test (sends a tampered request) against {reconstructed.url}",
-                category="cashier",
-                state_changing=True,
-            )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
-            if gate_ok:
-                price_findings = price_tampering.check([reconstructed], agent="cashier", prober=self._prober)
-                for finding in price_findings:
-                    verifier_engine.verify(
-                        finding,
-                        prober=self._prober,
-                        gate=self._gate,
-                        charge_confirmer=self._charge_confirmer,
-                    )
-            else:
-                # No gate / approval not granted: send no tamper probe at all; keep
-                # the lead as a passive, name-based candidate (stays [REPORTED]).
-                price_findings = price_tampering.check([reconstructed], agent="cashier")
-            self._sink.extend(price_findings)
-
-            # Financial: webhook-bypass (the second financial class with a replay).
-            # Only a webhook-like endpoint is probed, and only behind the gate —
-            # forging a callback is a state-changing write, gated BEFORE anything is
-            # sent (same cashier category as price-tampering; a Teller/Vault origin
-            # would be hard-gated). On a denied/paused/absent gate nothing is forged
-            # and the lead is kept as a passive, name-based [REPORTED] candidate.
-            from finlexpurple.finance.payment_tests import webhook_bypass
-
-            if webhook_bypass.looks_like_webhook(reconstructed):
-                webhook_ok = self._gate is not None and self._gate.resolve(GateAction(
-                    description=f"webhook-forgery test (sends a forged unsigned callback) against {reconstructed.url}",
-                    category="cashier",
-                    state_changing=True,
-                )) in (GateOutcome.ALLOWED, GateOutcome.APPROVED)
-                if webhook_ok:
-                    webhook_findings = webhook_bypass.check(
-                        [reconstructed], agent="cashier", prober=self._prober
-                    )
-                    for finding in webhook_findings:
-                        verifier_engine.verify(
-                            finding,
-                            prober=self._prober,
-                            gate=self._gate,
-                            settlement_confirmer=self._settlement_confirmer,
-                        )
-                else:
-                    webhook_findings = webhook_bypass.check([reconstructed], agent="cashier")
-                self._sink.extend(webhook_findings)
+            self._sink.extend(financial_specialist.capture_and_verify(
+                reconstructed, agent="cashier", prober=self._prober, gate=self._gate,
+                charge_confirmer=self._charge_confirmer, settlement_confirmer=self._settlement_confirmer,
+            ))
 
         # Persisted observation stays findings-empty (privacy guarantee); the
         # real findings live only in the sink / the 0600 report tree.
