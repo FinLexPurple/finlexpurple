@@ -45,6 +45,36 @@ class _CheckoutProber:
         return ProbeResponse(200, {}, f"receipt total={'0.01' if self._persist else '49.99'}")
 
 
+_WEBHOOK_EP = {"method": "POST", "path": "/payment/webhook", "parameter_names": [], "content_type": None}
+
+
+class _WebhookProber:
+    """Accepts a forged callback (POST body) per ``accept``; a GET read-back shows paid per ``paid``."""
+
+    def __init__(self, *, accept: bool, paid: bool) -> None:
+        self._accept, self._paid = accept, paid
+
+    def request(self, method, url, *, params=None, headers=None, body=None):
+        from finlexpurple.finance.payment_tests import webhook_bypass
+        if body is not None:  # the forged callback re-execution
+            return ProbeResponse(200 if self._accept else 403, {}, "received")
+        # a param-less GET: the settlement read-back of durable order state
+        text = f"order {webhook_bypass.FORGED_ORDER_ID} status=paid" if self._paid else "order status=pending"
+        return ProbeResponse(200, {}, text)
+
+
+def _settlement_readback(prober):
+    from finlexpurple.finance.payment_tests import webhook_bypass
+
+    def confirm(finding):
+        text = prober.request("GET", finding.url).text
+        if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
+            return True
+        return None  # never synthesize; unconfirmed stays inconclusive
+
+    return confirm
+
+
 def _approving_gate() -> ApprovalGate:
     return ApprovalGate(True, interactive=True, confirm_fn=lambda _p: True)
 
@@ -113,6 +143,42 @@ def test_scan_without_gate_leaves_price_tampering_reported() -> None:
     detector.run(_CHECKOUT)
     pt = [f for f in sink if f.vulnerability_class == "price_tampering"]
     assert pt and pt[0].status is FindingStatus.REPORTED  # no gate -> never verified
+
+
+def test_scan_verifies_webhook_bypass_when_settlement_confirmed() -> None:
+    sink: list[Finding] = []
+    prober = _WebhookProber(accept=True, paid=True)
+    detector = WebDetector(
+        origin="http://t.invalid", prober=prober, sink=sink,
+        gate=_approving_gate(), settlement_confirmer=_settlement_readback(prober),
+    )
+    detector.run(_WEBHOOK_EP)
+    wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
+    assert wh and wh[0].status is FindingStatus.VERIFIED
+    assert wh[0].agent == "cashier"
+
+
+def test_scan_webhook_accepted_but_unpaid_is_not_reproduced() -> None:
+    sink: list[Finding] = []
+    prober = _WebhookProber(accept=True, paid=False)  # accepted, but order never flips to paid
+    detector = WebDetector(
+        origin="http://t.invalid", prober=prober, sink=sink,
+        gate=_approving_gate(), settlement_confirmer=_settlement_readback(prober),
+    )
+    detector.run(_WEBHOOK_EP)
+    wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
+    # Accepted + unconfirmed paid-state -> inconclusive, never verified.
+    assert wh and wh[0].status is FindingStatus.INCONCLUSIVE
+
+
+def test_scan_without_gate_leaves_webhook_bypass_reported() -> None:
+    sink: list[Finding] = []
+    detector = WebDetector(
+        origin="http://t.invalid", prober=_WebhookProber(accept=True, paid=True), sink=sink,
+    )
+    detector.run(_WEBHOOK_EP)
+    wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
+    assert wh and wh[0].status is FindingStatus.REPORTED  # no gate -> no forgery sent, passive candidate
 
 
 def test_selector_can_skip_financial_entirely() -> None:
