@@ -1,26 +1,32 @@
 """Pack signature verification — identity-pinned, fail-closed (Decision 2).
 
 Mirrors the project's existing signing style (``evidence/signing.py`` /
-``evidence/verify.py``): the canonical **content hash is always checked and works
-offline**; the Sigstore signature is the **online** trust anchor, verified by
-wrapping the real ``cosign verify-blob`` binary through ``TOOL_REGISTRY`` — no
-Python ``sigstore`` library is used (none is installed), and no signature is ever
+``evidence/verify.py``): the canonical **content hash is checked offline** and
+the Sigstore signature is the **online** trust anchor, verified by wrapping the
+real ``cosign verify-blob`` binary through ``TOOL_REGISTRY`` — no Python
+``sigstore`` library is used (none is installed), and no signature is ever
 fabricated.
 
 Two things make this stricter than a generic "valid Sigstore signature" check:
 
-* **Expected-identity pinning.** Keyless verification passes
-  ``--certificate-identity`` + ``--certificate-oidc-issuer`` so cosign only
-  accepts a signature from the **one** publishing-workflow OIDC identity of the
-  packs repo. Any other valid Sigstore signature is rejected.
+* **Expected-identity pinning.** Keyless verification passes either
+  ``--certificate-identity`` (an exact signer) or ``--certificate-identity-regexp``
+  (the published packs channel: the one publishing workflow of the packs repo,
+  with the release *tag* allowed to vary) plus ``--certificate-oidc-issuer``, so
+  cosign only accepts a signature from that pinned identity. Any other valid
+  Sigstore signature is rejected.
 * **Fail-closed.** When a run *requires* a signature but no pinned identity is
   configured, or no signature bundle is present, verification does **not** pass —
-  it reports hash-only, "unsigned", honestly, and ``ok`` is False. A downloaded
-  pack is never trusted on its hash alone; only the shipped baseline pack
-  (:mod:`finlexpurple.intel`) is verified hash-only, and it is labeled as such.
+  it reports honestly and ``ok`` is False. A downloaded pack is never trusted on
+  its hash alone; only the shipped baseline pack (:mod:`finlexpurple.intel`) is
+  verified hash-only, and it is labeled as such.
 
-The exact ``certificate-identity`` string is a deployment value (it depends on
-the publishing workflow's path/ref) and is **injected**, never guessed here.
+On the signed channel the cosign signature is computed over the **exact pack
+bytes**, so it is the integrity *and* authenticity guarantee. A pinned
+``expected_sha256`` is therefore **optional** on that path — defence-in-depth to
+nail a specific known release — and when absent the signature stands alone. An
+**unsigned** pack (the baseline) still *must* be hash-pinned, or it is refused:
+unsigned-and-unpinned is trusted by nothing.
 """
 
 from __future__ import annotations
@@ -34,22 +40,49 @@ from typing import Any
 from finlexpurple.tools.registry import TOOL_REGISTRY
 
 # The GitHub Actions OIDC issuer, as documented in `cosign verify-blob --help`
-# (not a guess). The expected certificate-identity (the workflow path/ref) is a
-# deployment value supplied by the caller, never hardcoded here.
+# (not a guess). The expected certificate-identity (the workflow path/ref, exact
+# or regexp) is a deployment value supplied by the caller, never hardcoded here.
 GITHUB_ACTIONS_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
 
 _COSIGN_TIMEOUT_SECONDS = 120.0
 
-# (identity, issuer, signature_bundle_path, blob_path) -> cosign (returncode, stdout, stderr).
+# (identity_matcher, issuer, signature_bundle_path, blob_path) -> cosign (returncode, stdout, stderr).
+# ``identity_matcher`` is the exact identity or the identity regexp (see ExpectedIdentity.matcher);
+# which cosign flag carries it is decided by the default backend from the pinned identity.
 CosignVerifyBackend = Callable[[str, str, str, str], tuple[int, str, str]]
 
 
 @dataclass(frozen=True)
 class ExpectedIdentity:
-    """The pinned keyless signer: the publishing workflow's identity + OIDC issuer."""
+    """The pinned keyless signer: either an exact identity or an identity regexp, + OIDC issuer.
 
-    identity: str
+    Exactly one of ``identity`` (exact match) or ``identity_regexp`` (anchored
+    regular expression, for the published channel where the release tag varies)
+    must be set. ``issuer`` defaults to the documented GitHub Actions issuer.
+    """
+
+    identity: str | None = None
+    identity_regexp: str | None = None
     issuer: str = GITHUB_ACTIONS_OIDC_ISSUER
+
+    def __post_init__(self) -> None:
+        if bool(self.identity) == bool(self.identity_regexp):
+            raise ValueError(
+                "ExpectedIdentity requires exactly one of identity (exact) or "
+                "identity_regexp (pattern)."
+            )
+
+    @property
+    def matcher(self) -> str:
+        """The identity string to pin against (exact value or regexp pattern)."""
+
+        return self.identity if self.identity is not None else str(self.identity_regexp)
+
+    @property
+    def cosign_flag(self) -> str:
+        """The cosign flag that carries :attr:`matcher` (exact vs. regexp)."""
+
+        return "--certificate-identity" if self.identity is not None else "--certificate-identity-regexp"
 
 
 @dataclass(frozen=True)
@@ -59,7 +92,7 @@ class PackVerifyResult:
     ok: bool
     hash_ok: bool
     recomputed_sha256: str
-    expected_sha256: str
+    expected_sha256: str | None
     signature_checked: bool
     signature_ok: bool | None
     pinned_identity: str | None
@@ -82,19 +115,25 @@ def _sha256(data: bytes) -> str:
     return "sha256:" + hashlib.sha256(data).hexdigest()
 
 
-def _default_cosign_verify_backend() -> CosignVerifyBackend:
+def _cosign_verify_argv(expected_identity: ExpectedIdentity, bundle_path: str, blob_path: str) -> list[str]:
+    """Build the ``cosign verify-blob`` argv with the right identity flag (exact vs. regexp)."""
+
+    return [
+        "verify-blob",
+        "--bundle", bundle_path,
+        expected_identity.cosign_flag, expected_identity.matcher,
+        "--certificate-oidc-issuer", expected_identity.issuer,
+        blob_path,
+    ]
+
+
+def _default_cosign_verify_backend(expected_identity: ExpectedIdentity) -> CosignVerifyBackend:
     """Wrap the real ``cosign verify-blob`` (via TOOL_REGISTRY) as a verify backend."""
 
     cosign = TOOL_REGISTRY["cosign"]
 
     def backend(identity: str, issuer: str, bundle_path: str, blob_path: str) -> tuple[int, str, str]:
-        argv: Sequence[str] = [
-            "verify-blob",
-            "--bundle", bundle_path,
-            "--certificate-identity", identity,
-            "--certificate-oidc-issuer", issuer,
-            blob_path,
-        ]
+        argv: Sequence[str] = _cosign_verify_argv(expected_identity, bundle_path, blob_path)
         result = cosign.run(argv, timeout=_COSIGN_TIMEOUT_SECONDS)
         return (result.returncode if result.returncode is not None else -1, result.stdout, result.stderr)
 
@@ -104,38 +143,53 @@ def _default_cosign_verify_backend() -> CosignVerifyBackend:
 def verify_pack(
     pack_bytes: bytes,
     *,
-    expected_sha256: str,
+    expected_sha256: str | None,
     require_signature: bool,
     signature_bundle_path: Path | None = None,
     blob_path: Path | None = None,
     expected_identity: ExpectedIdentity | None = None,
     backend: CosignVerifyBackend | None = None,
 ) -> PackVerifyResult:
-    """Verify a pack's bytes against ``expected_sha256`` and, when required, its signature.
+    """Verify a pack's bytes and, when required, its identity-pinned signature.
 
-    The hash check is always performed and is fully offline. When
-    ``require_signature`` is True the result only passes if a signature bundle is
-    present, a pinned ``expected_identity`` is configured, and ``cosign
-    verify-blob`` accepts the signature for exactly that identity — otherwise it
-    **fails closed** (``ok`` False), never trusting the hash alone. When
-    ``require_signature`` is False (the shipped baseline pack) the hash is the
-    guarantee and the result is honestly labeled "hash-only, unsigned".
+    ``expected_sha256`` pins the exact bytes; it is **optional on the signed
+    path** (the cosign signature already covers the bytes) and, when given, must
+    match. When ``require_signature`` is True the result only passes if a
+    signature bundle is present, a pinned ``expected_identity`` is configured, and
+    ``cosign verify-blob`` accepts the signature for exactly that identity —
+    otherwise it **fails closed** (``ok`` False), never trusting the hash alone.
+    When ``require_signature`` is False (the shipped baseline) the pack **must**
+    be hash-pinned or it is refused; a matching pinned hash is the guarantee and
+    the result is honestly labeled "hash-only, unsigned".
     """
 
     recomputed = _sha256(pack_bytes)
-    hash_ok = recomputed == expected_sha256
     messages: list[str] = []
-    messages.append(
-        f"content hash matches ({recomputed})." if hash_ok
-        else f"HASH MISMATCH: expected {expected_sha256}, recomputed {recomputed}."
-    )
+    if expected_sha256 is None:
+        hash_pinned = False
+        hash_ok = True  # not pinned here; on the signed path the signature covers these exact bytes
+        messages.append(f"content hash not pinned; recomputed {recomputed} (the signature covers these bytes).")
+    else:
+        hash_pinned = True
+        hash_ok = recomputed == expected_sha256
+        messages.append(
+            f"content hash matches ({recomputed})." if hash_ok
+            else f"HASH MISMATCH: expected {expected_sha256}, recomputed {recomputed}."
+        )
 
     signature_checked = False
     signature_ok: bool | None = None
-    pinned_identity = expected_identity.identity if expected_identity is not None else None
+    pinned_identity = expected_identity.matcher if expected_identity is not None else None
 
     if not require_signature:
-        messages.append("hash-only, unsigned verification (baseline/offline): the content hash is the guarantee.")
+        # Offline/baseline trust: an unsigned pack MUST be hash-pinned, else trust nothing.
+        if not hash_pinned:
+            messages.append("REFUSING TO TRUST: unsigned verification requires a pinned content hash.")
+            return PackVerifyResult(
+                ok=False, hash_ok=False, recomputed_sha256=recomputed, expected_sha256=expected_sha256,
+                signature_checked=False, signature_ok=None, pinned_identity=pinned_identity, messages=messages,
+            )
+        messages.append("hash-only, unsigned verification (baseline/offline): the pinned content hash is the guarantee.")
         return PackVerifyResult(
             ok=hash_ok, hash_ok=hash_ok, recomputed_sha256=recomputed, expected_sha256=expected_sha256,
             signature_checked=False, signature_ok=None, pinned_identity=pinned_identity, messages=messages,
@@ -155,10 +209,10 @@ def verify_pack(
             signature_checked=False, signature_ok=None, pinned_identity=pinned_identity, messages=messages,
         )
 
-    run_backend = backend if backend is not None else _default_cosign_verify_backend()
+    run_backend = backend if backend is not None else _default_cosign_verify_backend(expected_identity)
     try:
         returncode, stdout, stderr = run_backend(
-            expected_identity.identity, expected_identity.issuer,
+            expected_identity.matcher, expected_identity.issuer,
             str(signature_bundle_path), str(blob_path),
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
@@ -171,12 +225,12 @@ def verify_pack(
     signature_checked = True
     signature_ok = returncode == 0
     if signature_ok:
-        messages.append(f"signature verified by cosign for pinned identity {expected_identity.identity!r}.")
+        messages.append(f"signature verified by cosign for pinned identity {expected_identity.matcher!r}.")
     else:
         detail = stderr.strip() or stdout.strip() or f"cosign exited {returncode}"
-        messages.append(f"SIGNATURE VERIFICATION FAILED (identity {expected_identity.identity!r}): {detail}.")
+        messages.append(f"SIGNATURE VERIFICATION FAILED (identity {expected_identity.matcher!r}): {detail}.")
 
-    # Fail closed: a required signature must both exist and verify; the hash must also match.
+    # Fail closed: a required signature must both exist and verify; a pinned hash (if any) must match.
     ok = hash_ok and signature_ok is True
     return PackVerifyResult(
         ok=ok, hash_ok=hash_ok, recomputed_sha256=recomputed, expected_sha256=expected_sha256,
