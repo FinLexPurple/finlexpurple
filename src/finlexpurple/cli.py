@@ -276,10 +276,28 @@ def _orchestrate_and_report(
             except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
                 return None
 
+        def _settlement_confirmer(finding: Finding) -> bool | None:
+            # Genuine in-scope read-back: does durable state now show the forged
+            # sentinel order as paid? Re-read in scope via the egress-checked prober
+            # and look for that exact order marked paid. Never synthesize a paid
+            # signal — if the read-back cannot confirm it (a webhook endpoint rarely
+            # exposes order state), return None so the finding stays unconfirmed
+            # (INCONCLUSIVE), never VERIFIED. A deployment with an order-status
+            # oracle in scope wires a stronger read here.
+            from finlexpurple.finance.payment_tests import webhook_bypass
+            try:
+                text = prober.request("GET", finding.url).text
+            except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable
+                return None
+            if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
+                return True
+            return None
+
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
-                gate=gate, charge_confirmer=_charge_confirmer, run_financial=run_financial,
+                gate=gate, charge_confirmer=_charge_confirmer,
+                settlement_confirmer=_settlement_confirmer, run_financial=run_financial,
             )}
         )
     else:
