@@ -9,6 +9,7 @@ the sink, and (4) keeps the persisted observation findings-empty.
 
 from __future__ import annotations
 
+from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import ProbeResponse
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.gates.approval_gate import ApprovalGate
@@ -46,10 +47,14 @@ class _CheckoutProber:
 
 
 _WEBHOOK_EP = {"method": "POST", "path": "/payment/webhook", "parameter_names": [], "content_type": None}
+# The settlement read-back targets a SEPARATE order-status oracle, never the webhook URL.
+_ORACLE_URL = "http://t.invalid/orders/{order_id}"
 
 
 class _WebhookProber:
-    """Accepts a forged callback (POST body) per ``accept``; a GET read-back shows paid per ``paid``."""
+    """Accepts/rejects a forged callback (POST body) per ``accept``; a GET of the SEPARATE
+    order-status oracle (/orders/<id>) shows paid per ``paid`` — the webhook URL itself exposes
+    no order state, so a confirmer that read it would never see 'paid'."""
 
     def __init__(self, *, accept: bool, paid: bool) -> None:
         self._accept, self._paid = accept, paid
@@ -58,21 +63,11 @@ class _WebhookProber:
         from finlexpurple.finance.payment_tests import webhook_bypass
         if body is not None:  # the forged callback re-execution
             return ProbeResponse(200 if self._accept else 403, {}, "received")
-        # a param-less GET: the settlement read-back of durable order state
-        text = f"order {webhook_bypass.FORGED_ORDER_ID} status=paid" if self._paid else "order status=pending"
-        return ProbeResponse(200, {}, text)
-
-
-def _settlement_readback(prober):
-    from finlexpurple.finance.payment_tests import webhook_bypass
-
-    def confirm(finding):
-        text = prober.request("GET", finding.url).text
-        if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
-            return True
-        return None  # never synthesize; unconfirmed stays inconclusive
-
-    return confirm
+        if "/orders/" in url:  # the separate order-status oracle
+            status = webhook_bypass.PAID_MARKER if self._paid else "pending"
+            order_id = url.rsplit("/", 1)[-1]
+            return ProbeResponse(200, {}, f'{{"order_id": "{order_id}", "status": "{status}"}}')
+        return ProbeResponse(200, {}, "no order state here")  # the webhook URL exposes nothing
 
 
 def _approving_gate() -> ApprovalGate:
@@ -145,12 +140,12 @@ def test_scan_without_gate_leaves_price_tampering_reported() -> None:
     assert pt and pt[0].status is FindingStatus.REPORTED  # no gate -> never verified
 
 
-def test_scan_verifies_webhook_bypass_when_settlement_confirmed() -> None:
+def test_scan_verifies_webhook_bypass_when_oracle_shows_paid() -> None:
     sink: list[Finding] = []
     prober = _WebhookProber(accept=True, paid=True)
     detector = WebDetector(
         origin="http://t.invalid", prober=prober, sink=sink,
-        gate=_approving_gate(), settlement_confirmer=_settlement_readback(prober),
+        gate=_approving_gate(), settlement_confirmer=_settlement_confirmer_for(prober, _ORACLE_URL),
     )
     detector.run(_WEBHOOK_EP)
     wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
@@ -158,16 +153,29 @@ def test_scan_verifies_webhook_bypass_when_settlement_confirmed() -> None:
     assert wh[0].agent == "cashier"
 
 
-def test_scan_webhook_accepted_but_unpaid_is_not_reproduced() -> None:
+def test_scan_webhook_accepted_but_oracle_shows_unpaid_is_not_reproduced() -> None:
     sink: list[Finding] = []
-    prober = _WebhookProber(accept=True, paid=False)  # accepted, but order never flips to paid
+    prober = _WebhookProber(accept=True, paid=False)  # accepted, but the oracle shows it never flipped
     detector = WebDetector(
         origin="http://t.invalid", prober=prober, sink=sink,
-        gate=_approving_gate(), settlement_confirmer=_settlement_readback(prober),
+        gate=_approving_gate(), settlement_confirmer=_settlement_confirmer_for(prober, _ORACLE_URL),
     )
     detector.run(_WEBHOOK_EP)
     wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
-    # Accepted + unconfirmed paid-state -> inconclusive, never verified.
+    # Oracle read succeeded and showed NOT paid -> not reproduced (not "vulnerability absent").
+    assert wh and wh[0].status is FindingStatus.NOT_REPRODUCED
+
+
+def test_scan_webhook_accepted_without_oracle_is_inconclusive() -> None:
+    sink: list[Finding] = []
+    prober = _WebhookProber(accept=True, paid=True)
+    detector = WebDetector(
+        origin="http://t.invalid", prober=prober, sink=sink,
+        gate=_approving_gate(), settlement_confirmer=_settlement_confirmer_for(prober, None),
+    )
+    detector.run(_WEBHOOK_EP)
+    wh = [f for f in sink if f.vulnerability_class == "webhook_bypass"]
+    # No order-status oracle -> no read-back -> inconclusive, never verified.
     assert wh and wh[0].status is FindingStatus.INCONCLUSIVE
 
 
