@@ -34,6 +34,7 @@ OUTBOUND_CALL_SITES: dict[str, str] = {
     "detectors/prober.py": "EgressPolicy.check_url before every send (default-deny allow-list)",
     "recon/crawler.py": "scope enforcement + pinned-IP connect before every send",
     "telemetry/sender.py": "opt-in only; fixed allow-listed install-counter endpoint",
+    "intel/download.py": "EgressPolicy.check_url before every anonymous pack fetch (default-deny allow-list)",
     "providers/ollama_provider.py": "local/self-hosted host; metered via MeteredProvider in the loop",
     "providers/anthropic_provider.py": "configured provider endpoint; metered via MeteredProvider",
     "providers/openai_provider.py": (
