@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+from collections.abc import Callable
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -155,6 +156,7 @@ def _orchestrate_and_report(
     *,
     request_delay: float = 0.5,
     detect_origin: str | None = None,
+    order_status_url: str | None = None,
 ) -> None:
     """Record the authorization attestation + fix mode, then drive the engine under a kill switch.
 
@@ -276,22 +278,10 @@ def _orchestrate_and_report(
             except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
                 return None
 
-        def _settlement_confirmer(finding: Finding) -> bool | None:
-            # Genuine in-scope read-back: does durable state now show the forged
-            # sentinel order as paid? Re-read in scope via the egress-checked prober
-            # and look for that exact order marked paid. Never synthesize a paid
-            # signal — if the read-back cannot confirm it (a webhook endpoint rarely
-            # exposes order state), return None so the finding stays unconfirmed
-            # (INCONCLUSIVE), never VERIFIED. A deployment with an order-status
-            # oracle in scope wires a stronger read here.
-            from finlexpurple.finance.payment_tests import webhook_bypass
-            try:
-                text = prober.request("GET", finding.url).text
-            except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable
-                return None
-            if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
-                return True
-            return None
+        # Webhook-bypass settlement read-back from a SEPARATE operator-provided
+        # order-status oracle (never the webhook URL itself); absent one it stays
+        # INCONCLUSIVE, never VERIFIED.
+        _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
@@ -417,6 +407,40 @@ def init() -> None:
     typer.echo(f"Created {destination}")
 
 
+def _settlement_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding], bool | None]:
+    """Build the webhook-bypass settlement read-back from an operator-provided oracle.
+
+    The forged callback's durable effect — did the order flip to paid? — is read
+    from a SEPARATE, operator-provided order-status URL, never by re-reading the
+    webhook endpoint (a webhook URL does not expose order state). Without an
+    oracle URL a real read-back is impossible, so it returns ``None`` and the
+    finding stays INCONCLUSIVE — never VERIFIED without a genuine read. With one,
+    it substitutes the forged sentinel order id for a literal ``{order_id}``
+    placeholder and GETs that URL through the egress-checked prober (in-scope
+    only; an out-of-scope URL is blocked before any socket opens). It returns
+    ``True`` only when the oracle genuinely shows that order paid, ``False`` when
+    the read succeeds but the order is not paid (or absent), and ``None`` when the
+    read cannot be made. A paid signal is never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import webhook_bypass
+
+    def confirm(finding: Finding) -> bool | None:
+        del finding  # the forgery targets a fixed sentinel order; the oracle URL addresses it
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", webhook_bypass.FORGED_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        return webhook_bypass.PAID_MARKER in text and webhook_bypass.FORGED_ORDER_ID in text
+
+    return confirm
+
+
 @app.command()
 def scan(
     ctx: typer.Context,
@@ -440,6 +464,18 @@ def scan(
         float,
         typer.Option("--request-delay", min=0, max=60, help="Seconds between HTTP requests (default 0.5)."),
     ] = 0.5,
+    order_status_url: Annotated[
+        str | None,
+        typer.Option(
+            "--order-status-url",
+            envvar="FLP_ORDER_STATUS_URL",
+            help=(
+                "In-scope order-status oracle URL for webhook-bypass settlement confirmation; "
+                "may contain a literal {order_id} placeholder. Without it, a forged callback "
+                "stays INCONCLUSIVE (never VERIFIED), since durable paid-state cannot be read."
+            ),
+        ),
+    ] = None,
     fix_mode: Annotated[
         str | None,
         typer.Option("--fix-mode", help="'agent' or 'human' (default human); recorded for the fix stage (Phase 15)."),
@@ -535,6 +571,7 @@ def scan(
         fix_mode,
         request_delay=request_delay,
         detect_origin=_detection_origin(root_url) if root_url else None,
+        order_status_url=order_status_url,
     )
 
 
@@ -858,15 +895,10 @@ def run_agent(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
             return None
 
-    def _settlement_confirmer(finding: Finding) -> bool | None:
-        from finlexpurple.finance.payment_tests import webhook_bypass
-        try:
-            text = prober.request("GET", finding.url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable
-            return None
-        if webhook_bypass.FORGED_ORDER_ID in text and webhook_bypass.PAID_MARKER in text:
-            return True
-        return None
+    # Settlement read-back from the operator-provided order-status oracle (env
+    # FLP_ORDER_STATUS_URL for the isolated agent path); absent one it stays
+    # INCONCLUSIVE, never VERIFIED.
+    _settlement_confirmer = _settlement_confirmer_for(prober, os.environ.get("FLP_ORDER_STATUS_URL"))
 
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
