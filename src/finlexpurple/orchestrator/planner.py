@@ -13,11 +13,14 @@ the model.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
 from finlexpurple.providers.base import LLMProvider, Message, ProviderError
+
+logger = logging.getLogger(__name__)
 
 
 class _PriorityOrder(BaseModel):
@@ -85,7 +88,10 @@ class Planner:
             by_id = {action["action_id"]: action for action in remaining}
             if len(requested) == len(remaining) and set(requested) == set(by_id):
                 return [by_id[action_id] for action_id in requested]
-        except ProviderError:
+        except ProviderError as exc:
             # Provider availability affects ordering only, never safety or execution.
+            # Make the fallback legible instead of leaving a raw httpx request line
+            # as the only signal the model call failed.
+            logger.warning("LLM planning call failed (%s); using deterministic order.", exc)
             return remaining
         return remaining
