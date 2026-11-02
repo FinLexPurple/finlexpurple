@@ -115,8 +115,12 @@ def configure_logging(json_logs: bool = False, level: int = logging.INFO) -> Non
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level)
-    # Routine per-request INFO lines from httpx/httpcore (e.g. "HTTP Request: POST ...
-    # 401") must not masquerade as the primary signal; our own clear warnings are what
-    # the user sees. Raise their threshold to WARNING — genuine errors still surface.
-    for noisy in ("httpx", "httpcore"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # Routine per-request INFO/DEBUG noise from the HTTP stack and each provider SDK
+    # (e.g. "HTTP Request: POST ... 401") must not masquerade as the primary signal;
+    # our own clear warnings (under finlexpurple.*) are what the user sees. Raise
+    # these to WARNING — genuine warnings/errors still surface, and finlexpurple.*
+    # loggers are untouched. Note "httpx2" is specifically the anthropic SDK's own
+    # httpx request logger (anthropic/_utils/_logs.py), not a typo; each SDK names
+    # its request logger differently (openai -> "openai", gemini -> "google_genai").
+    for _noisy in ("httpx", "httpx2", "httpcore", "anthropic", "openai", "google_genai"):
+        logging.getLogger(_noisy).setLevel(logging.WARNING)
