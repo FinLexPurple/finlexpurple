@@ -11,9 +11,57 @@ import openai
 import pytest
 
 from finlexpurple.config import Config
-from finlexpurple.logging_setup import HumanFormatter, JsonFormatter, RedactionFilter
-from finlexpurple.providers.base import InvalidAPIKeyError, Message
+from finlexpurple.logging_setup import (
+    HumanFormatter,
+    JsonFormatter,
+    RedactionFilter,
+    configure_logging,
+)
+from finlexpurple.orchestrator.planner import Planner
+from finlexpurple.providers.base import InvalidAPIKeyError, Message, ProviderError
 from finlexpurple.providers.openai_provider import OpenAIProvider
+
+_PROVIDER_REQUEST_LOGGERS = ("httpx", "httpx2", "httpcore", "anthropic", "openai", "google_genai")
+
+
+class _FailingProvider:
+    def complete(self, messages, *, response_schema=None):
+        raise ProviderError("401 Unauthorized (invalid API key)")
+
+
+def test_provider_request_noise_suppressed_only_clear_planner_warning(capsys) -> None:
+    # Part C: configure_logging raises every provider request logger (incl. the
+    # anthropic SDK's "httpx2") to WARNING, so a routine INFO "HTTP Request ... 401"
+    # line is suppressed and only our clear finlexpurple planner warning is shown.
+    root = logging.getLogger()
+    saved_handlers, saved_level = root.handlers[:], root.level
+    saved_noisy = {name: logging.getLogger(name).level for name in _PROVIDER_REQUEST_LOGGERS}
+    try:
+        configure_logging()
+        # Each provider request logger is quieted to WARNING; finlexpurple.* is not.
+        for name in _PROVIDER_REQUEST_LOGGERS:
+            assert logging.getLogger(name).level == logging.WARNING
+        assert logging.getLogger("finlexpurple.orchestrator.planner").level == logging.NOTSET
+        # The anthropic SDK emits its request line on "httpx2" at INFO -> suppressed.
+        logging.getLogger("httpx2").info(
+            'HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 401 Unauthorized"'
+        )
+        # The planner falls back and logs its own clear warning (under finlexpurple.*).
+        catalog = [
+            {"path": "/a", "parameter_names": [], "content_type": None},
+            {"path": "/b", "parameter_names": [], "content_type": None},
+        ]
+        Planner(_FailingProvider()).plan(catalog, set())
+    finally:
+        root.handlers[:] = saved_handlers
+        root.setLevel(saved_level)
+        for name, level in saved_noisy.items():
+            logging.getLogger(name).setLevel(level)
+
+    err = capsys.readouterr().err
+    assert "HTTP Request" not in err  # the raw httpx2 request line never surfaced
+    assert "using deterministic order" in err  # only our clear warning did
+    assert "finlexpurple.orchestrator.planner" in err
 
 
 @pytest.mark.parametrize("formatter", [HumanFormatter("%(levelname)s %(message)s"), JsonFormatter()])
