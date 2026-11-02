@@ -115,3 +115,8 @@ def configure_logging(json_logs: bool = False, level: int = logging.INFO) -> Non
     root.handlers.clear()
     root.addHandler(handler)
     root.setLevel(level)
+    # Routine per-request INFO lines from httpx/httpcore (e.g. "HTTP Request: POST ...
+    # 401") must not masquerade as the primary signal; our own clear warnings are what
+    # the user sees. Raise their threshold to WARNING — genuine errors still surface.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
