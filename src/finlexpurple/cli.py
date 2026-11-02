@@ -6,6 +6,7 @@ import contextlib
 import os
 import sys
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
@@ -147,6 +148,75 @@ def _detection_origin(canonical_target: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class _SafetySettings:
+    """Safety-relevant settings, tolerant of a model-provider misconfiguration.
+
+    ``config`` is the validated :class:`Config` when it loaded, else ``None`` (the
+    provider is unconfigured, so planning runs deterministically). The two safety
+    values are always populated — from the loaded config, or recovered from the
+    environment with the SAME validators when load failed — so an explicit
+    ``REQUIRE_HUMAN_APPROVAL`` / ``MAX_SPEND_USD`` is honored rather than silently
+    reset to a default. ``warning`` is a user-facing line when recovery happened.
+    """
+
+    config: Config | None
+    require_human_approval: bool
+    max_spend_usd: float
+    warning: str | None = None
+
+
+def _recover_bool_env(name: str, *, default: bool) -> bool:
+    """Parse a boolean safety env var with Config's own validator; a bad value errors clearly."""
+
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return bool(Config.validate_boolean(raw))
+    except ValueError as exc:
+        raise ConfigurationError(f"{name}: {exc}") from None
+
+
+def _recover_spend_env(name: str) -> float:
+    """Parse MAX_SPEND_USD with Config's own validator; a bad value errors clearly."""
+
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return 5.0
+    try:
+        return float(Config.validate_max_spend(raw))
+    except ValueError as exc:
+        raise ConfigurationError(f"{name}: {exc}") from None
+
+
+def _load_safety_settings() -> _SafetySettings:
+    """Load config; on failure warn clearly and recover the safety settings from the environment.
+
+    Mirrors ``_telemetry_config``'s tolerant recovery. A provider/config error (for
+    example a cloud provider with no key) must NOT silently drop the user's safety
+    settings: ``REQUIRE_HUMAN_APPROVAL`` and ``MAX_SPEND_USD`` are re-read from the
+    environment with the same validators (so ``false``/``0``/a number still apply),
+    and planning proceeds deterministically with no provider. A genuinely
+    unparseable SAFETY value raises its own clear :class:`ConfigurationError`
+    instead of being coerced to a default.
+    """
+
+    try:
+        config = Config.load()
+    except (ConfigurationError, ValueError, OSError) as exc:
+        require_human_approval = _recover_bool_env("REQUIRE_HUMAN_APPROVAL", default=True)
+        max_spend_usd = _recover_spend_env("MAX_SPEND_USD")
+        warning = (
+            f"Warning: configuration not fully loaded ({exc}). The model provider is "
+            "unconfigured, so planning runs deterministically (no model call). Safety settings "
+            f"were read from the environment: REQUIRE_HUMAN_APPROVAL={require_human_approval}, "
+            f"MAX_SPEND_USD={max_spend_usd:.2f}."
+        )
+        return _SafetySettings(None, require_human_approval, max_spend_usd, warning)
+    return _SafetySettings(config, config.require_human_approval, config.max_spend_usd, None)
+
+
 def _orchestrate_and_report(
     state: RunState,
     state_path: Path,
@@ -157,6 +227,7 @@ def _orchestrate_and_report(
     request_delay: float = 0.5,
     detect_origin: str | None = None,
     order_status_url: str | None = None,
+    llm_plan: bool = False,
 ) -> None:
     """Record the authorization attestation + fix mode, then drive the engine under a kill switch.
 
@@ -182,27 +253,44 @@ def _orchestrate_and_report(
     audit.record("fix_mode_selected", mode=fix.value)
     typer.echo(f"Fix mode: {fix.value}.")
 
-    # A provider is optional: it only lets the planner reorder actions. If none
-    # is configured, or configuration/construction fails, the scan proceeds with
-    # the deterministic ordering rather than aborting. The dollar spend cap (§15)
-    # is default-on: it is always constructed (even when no paid provider runs),
-    # and when a provider is present it is wrapped in a MeteredProvider so every
-    # model call is charged against the cap with no un-metered path to a paid API.
-    provider = None
-    max_spend_usd = 5.0
-    require_human_approval = True  # §3 default-on; only an explicit config disables it
+    # Safety settings are honored even when the model provider is misconfigured: a
+    # provider/config error is reported loudly and planning falls back to
+    # deterministic, but REQUIRE_HUMAN_APPROVAL / MAX_SPEND_USD are recovered from
+    # the environment rather than silently reset (a genuinely bad safety value still
+    # errors out). The dollar spend cap (§15) is always constructed.
     try:
-        config = Config.load()
-        max_spend_usd = config.max_spend_usd
-        require_human_approval = config.require_human_approval
-        if os.environ.get("LLM_PROVIDER"):
-            provider = create_provider(config)
-    except (ConfigurationError, ValueError, OSError):
-        provider = None
+        settings = _load_safety_settings()
+    except ConfigurationError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if settings.warning:
+        typer.echo(settings.warning, err=True)
+    max_spend_usd = settings.max_spend_usd
+    require_human_approval = settings.require_human_approval
+
+    # Planning is DETERMINISTIC by default (zero model calls — like the selector).
+    # The model reorders actions only with --llm-plan, and only then is a provider
+    # constructed, wrapped in a MeteredProvider so every call is charged against the
+    # cap (no un-metered path to a paid API), and handed to the planner.
+    provider = None
+    if llm_plan and settings.config is not None and os.environ.get("LLM_PROVIDER"):
+        try:
+            provider = create_provider(settings.config)
+        except (ConfigurationError, ValueError, OSError) as exc:
+            typer.echo(
+                f"Warning: could not construct the model provider ({exc}); "
+                "planning runs deterministically.",
+                err=True,
+            )
+            provider = None
     budget_guard = BudgetGuard(max_spend_usd)
     if provider is not None:
         provider = MeteredProvider(provider, budget_guard)
-    typer.echo(f"Spend cap: ${budget_guard.max_spend_usd:.2f} (set MAX_SPEND_USD to change).")
+    plan_mode = "model-reordered" if provider is not None else "deterministic"
+    typer.echo(
+        f"Spend cap: ${budget_guard.max_spend_usd:.2f} (set MAX_SPEND_USD to change). "
+        f"Planning: {plan_mode} (use --llm-plan to let the model reorder actions)."
+    )
 
     controller = SafeFailureController()
 
@@ -476,6 +564,17 @@ def scan(
             ),
         ),
     ] = None,
+    llm_plan: Annotated[
+        bool,
+        typer.Option(
+            "--llm-plan",
+            envvar="FLP_LLM_PLAN",
+            help=(
+                "Use the configured model to reorder detector actions (costs a model call); "
+                "off by default — ordering is deterministic and a default scan makes no model calls."
+            ),
+        ),
+    ] = False,
     fix_mode: Annotated[
         str | None,
         typer.Option("--fix-mode", help="'agent' or 'human' (default human); recorded for the fix stage (Phase 15)."),
@@ -572,6 +671,7 @@ def scan(
         request_delay=request_delay,
         detect_origin=_detection_origin(root_url) if root_url else None,
         order_status_url=order_status_url,
+        llm_plan=llm_plan,
     )
 
 
@@ -894,12 +994,14 @@ def run_agent(
     # run PAUSES the state-changing re-execution; REQUIRE_HUMAN_APPROVAL=false
     # config-allows a standard-gate agent, while Teller/Vault stay hard-gated) and
     # the same in-scope read-backs, which never synthesize a signal.
-    require_human_approval = True
     try:
-        require_human_approval = Config.load().require_human_approval
-    except (ConfigurationError, ValueError, OSError):
-        require_human_approval = True
-    gate = ApprovalGate(require_human_approval, interactive=False, audit_log=audit)
+        settings = _load_safety_settings()
+    except ConfigurationError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from None
+    if settings.warning:
+        typer.echo(settings.warning, err=True)
+    gate = ApprovalGate(settings.require_human_approval, interactive=False, audit_log=audit)
 
     def _charge_confirmer(finding: Finding, value: str) -> bool | None:
         try:
