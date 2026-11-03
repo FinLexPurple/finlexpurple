@@ -88,9 +88,10 @@ class Config(BaseSettings):
         default=True,
         validation_alias=AliasChoices("FLP_REQUIRE_HUMAN_APPROVAL", "REQUIRE_HUMAN_APPROVAL"),
     )
-    # Telemetry env vars (TELEMETRY_ENABLED / TELEMETRY_ENDPOINT) are frozen in
-    # Unit 1.5 (the telemetry envelope), where the FINLEXPURPLE_TELEMETRY opt-out
-    # convention is also finalized; left on their current names here.
+    # Telemetry consent (Unit 1.5): opt-in, off by default. TELEMETRY_ENABLED and
+    # TELEMETRY_ENDPOINT keep their established names; the FINLEXPURPLE_TELEMETRY /
+    # DO_NOT_TRACK opt-out kill-switch is enforced in telemetry.sender (it forces
+    # off even when enabled, so it is not a Config field). See CONTRACTS.md.
     telemetry_enabled: bool = Field(default=False, validation_alias="TELEMETRY_ENABLED")
     # Where opt-in telemetry is sent; defaults to the public install-counter
     # Worker and is overridable via TELEMETRY_ENDPOINT. Having a default does not
