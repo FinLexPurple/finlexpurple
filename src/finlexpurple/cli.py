@@ -810,6 +810,13 @@ def off() -> None:
     typer.echo(telemetry_cli.disable_telemetry(Path.cwd() / ".env"))
 
 
+@telemetry_app.command()
+def reset() -> None:
+    """Reset the local random install id (and its one-time ping marker)."""
+
+    typer.echo(telemetry_cli.reset_install_id_text())
+
+
 @app.command()
 def feedback(
     run: Annotated[str, typer.Option("--run", help="Run id (directory under finlexpurple-reports/).")],
