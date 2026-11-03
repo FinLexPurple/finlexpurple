@@ -14,11 +14,21 @@ result never silently depends on it.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from finlexpurple.evidence.bundle import compute_content_hash, load_bundle
+from finlexpurple.evidence.bundle import (
+    BUNDLE_FORMAT_V1,
+    BundleFormatError,
+    compute_content_hash,
+    detect_format,
+    dsse_pae,
+    load_bundle,
+)
 
 # Verifies a signature over a content hash; returns cosign's (returncode, stdout, stderr).
 SignatureVerifier = Callable[[str, str], tuple[int, str, str]]
@@ -68,6 +78,19 @@ def verify_bundle(
     """
 
     bundle = load_bundle(text)
+    if detect_format(bundle) == BUNDLE_FORMAT_V1:
+        return _verify_v1(bundle, expected_hash=expected_hash, signature_verifier=signature_verifier)
+    return _verify_v0(bundle, expected_hash=expected_hash, signature_verifier=signature_verifier)
+
+
+def _verify_v0(
+    bundle: dict[str, Any],
+    *,
+    expected_hash: str | None,
+    signature_verifier: SignatureVerifier | None,
+) -> VerifyReport:
+    """Verify a legacy ``flp-bundle/v0`` bundle by recomputing the canonical payload hash."""
+
     payload = bundle["payload"]
     stored_hash = bundle["content_hash"]
     signing = bundle["signing"]
@@ -119,6 +142,95 @@ def verify_bundle(
 
     # Overall pass: the hash must match; if an expected hash or a signature check
     # was performed, neither may have failed. An unchecked signature never fails.
+    ok = hash_ok and expected_hash_ok is not False and signature_ok is not False
+    return VerifyReport(
+        ok=ok,
+        hash_ok=hash_ok,
+        recomputed_hash=recomputed_hash,
+        stored_hash=stored_hash,
+        expected_hash_ok=expected_hash_ok,
+        signing_mode=signing_mode,
+        signature_present=signature_present,
+        signature_ok=signature_ok,
+        messages=messages,
+    )
+
+
+def _verify_v1(
+    bundle: dict[str, Any],
+    *,
+    expected_hash: str | None,
+    signature_verifier: SignatureVerifier | None,
+) -> VerifyReport:
+    """Verify a ``flp-bundle/v1`` bundle by hashing the **exact stored payload bytes**.
+
+    Decodes the base64 DSSE payload and hashes those bytes directly — it never
+    re-serializes the document — then compares to the stored ``integrity.digest``.
+    A signature, when present, is checked (if a verifier is supplied) over the
+    DSSE PAE reconstructed from the same bytes; the offline hash guarantee never
+    depends on it.
+    """
+
+    dsse = bundle["dsse"]
+    integrity = bundle["integrity"]
+
+    try:
+        payload_bytes = base64.b64decode(str(dsse["payload"]), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise BundleFormatError(f"v1 bundle 'dsse.payload' is not valid base64: {exc}") from None
+
+    recomputed_digest = hashlib.sha256(payload_bytes).hexdigest()
+    stored_digest = str(integrity.get("digest", {}).get("sha256", ""))
+    recomputed_hash = f"sha256:{recomputed_digest}"
+    stored_hash = f"sha256:{stored_digest}"
+    hash_ok = bool(stored_digest) and recomputed_digest == stored_digest
+
+    messages: list[str] = []
+    if hash_ok:
+        messages.append(f"payload digest matches ({recomputed_hash}); hashed over the exact stored bytes.")
+    else:
+        messages.append(
+            f"HASH MISMATCH: stored {stored_hash}, recomputed {recomputed_hash}. "
+            "The bundle payload was altered after it was created."
+        )
+
+    expected_hash_ok: bool | None = None
+    if expected_hash is not None:
+        expected_hash_ok = _normalize(expected_hash) == _normalize(recomputed_hash)
+        if expected_hash_ok:
+            messages.append("recomputed digest matches the expected hash supplied by the caller.")
+        else:
+            messages.append(
+                f"EXPECTED-HASH MISMATCH: caller expected {expected_hash}, "
+                f"bundle recomputes to {recomputed_hash}."
+            )
+
+    signing = integrity.get("signing", {})
+    signing_mode = str(signing.get("effective_mode") or integrity.get("integrity_level", "unknown"))
+    signatures = dsse.get("signatures") or []
+    signature = str(signatures[0].get("sig", "")) if signatures else ""
+    signature_present = bool(signature)
+    signature_ok: bool | None = None
+    if not signature_present:
+        messages.append(
+            f"no signature to verify (signing mode: {signing_mode}); "
+            "integrity rests on the payload digest."
+        )
+    elif signature_verifier is None:
+        messages.append(
+            f"signature present (mode: {signing_mode}) but not cryptographically verified "
+            "(no verifier supplied / offline); the hash check above stands on its own."
+        )
+    else:
+        pae = dsse_pae(str(dsse.get("payloadType", "")), payload_bytes)
+        returncode, stdout, stderr = signature_verifier(pae.decode("ascii"), signature)
+        signature_ok = returncode == 0
+        if signature_ok:
+            messages.append(f"signature verified by cosign (mode: {signing_mode}).")
+        else:
+            detail = stderr.strip() or stdout.strip() or f"cosign exited {returncode}"
+            messages.append(f"SIGNATURE VERIFICATION FAILED (mode: {signing_mode}): {detail}.")
+
     ok = hash_ok and expected_hash_ok is not False and signature_ok is not False
     return VerifyReport(
         ok=ok,
