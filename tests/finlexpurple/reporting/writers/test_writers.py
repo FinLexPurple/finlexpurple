@@ -18,11 +18,20 @@ def _finding() -> Finding:
 
 def test_json_writer_has_summary_and_findings() -> None:
     f = _finding()
-    doc = json.loads(render_json(target="t", generated_at="2026-01-01T00:00:00+00:00",
-                                 summary=summarize([f]), findings=[f]))
-    assert doc["target"] == "t"
+    doc = json.loads(render_json(
+        target="http://t/s", run_id="t-00000000-01M59ZNBK0ZKGNFAXEEP9EXSZ4",
+        started_at="2026-01-01T00:00:00+00:00", generated_at="2026-01-01T00:00:01+00:00",
+        summary=summarize([f]), findings=[f],
+    ))
+    assert doc["schema_version"] == 1
+    assert doc["tool"]["name"] == "finlexpurple"
+    assert doc["target"]["raw"] == "http://t/s" and doc["target"]["host"] == "t"
     assert doc["summary"]["verified"] == 1
-    assert doc["findings"][0]["vulnerability_class"] == "sqli"
+    finding_doc = doc["findings"][0]
+    assert finding_doc["vulnerability_class"] == "sqli"
+    assert finding_doc["rule_id"] == "sqli"
+    assert finding_doc["location"]["route_template"] == "/s"
+    assert doc["rules"]["sqli"]["family"] == "web"
 
 
 def test_markdown_writer_uses_text_badge_and_bundle_ref() -> None:
