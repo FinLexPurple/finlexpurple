@@ -40,16 +40,38 @@ DEFAULT_PINNED_IDENTITY_REGEXP = (
 )
 DEFAULT_OIDC_ISSUER = GITHUB_ACTIONS_OIDC_ISSUER
 
-# Env override keys (documented for self-hosting/testing).
-ENV_URL = "INTEL_PACKS_PULL_URL"
-ENV_SIG_URL = "INTEL_PACKS_SIG_URL"
-ENV_IDENTITY = "INTEL_PINNED_IDENTITY"  # a non-empty value pins an EXACT identity (vs the baked regexp)
-ENV_SHA = "INTEL_EXPECTED_SHA256"  # optional extra pin; unset/empty => the signature stands alone
-ENV_EGRESS_HOSTS = "INTEL_PACKS_EGRESS_HOSTS"  # extra allow-listed hosts (e.g. the release CDN), comma-separated
+# Env override keys (documented for self-hosting/testing). Canonically ``FLP_``
+# prefixed (Unit 1.4 freeze); each also accepts its pre-0.4.0 ``INTEL_`` name as
+# a back-compat alias, canonical preferred.
+ENV_URL = "FLP_INTEL_PACKS_PULL_URL"
+ENV_SIG_URL = "FLP_INTEL_PACKS_SIG_URL"
+ENV_IDENTITY = "FLP_INTEL_PINNED_IDENTITY"  # a non-empty value pins an EXACT identity (vs the baked regexp)
+ENV_SHA = "FLP_INTEL_EXPECTED_SHA256"  # optional extra pin; unset/empty => the signature stands alone
+ENV_EGRESS_HOSTS = "FLP_INTEL_PACKS_EGRESS_HOSTS"  # extra allow-listed hosts (e.g. the release CDN), comma-separated
+
+# Canonical FLP_ name -> its pre-0.4.0 back-compat alias.
+_ENV_ALIASES = {
+    ENV_URL: "INTEL_PACKS_PULL_URL",
+    ENV_SIG_URL: "INTEL_PACKS_SIG_URL",
+    ENV_IDENTITY: "INTEL_PINNED_IDENTITY",
+    ENV_SHA: "INTEL_EXPECTED_SHA256",
+    ENV_EGRESS_HOSTS: "INTEL_PACKS_EGRESS_HOSTS",
+}
 
 
 class ConfigError(RuntimeError):
     """A required pull override was cleared (set empty): refuse rather than weaken the pin."""
+
+
+def _present_key(env: Mapping[str, str], canonical: str) -> str | None:
+    """Return whichever key is set — the canonical ``FLP_`` name, else its ``INTEL_`` alias."""
+
+    if canonical in env:
+        return canonical
+    alias = _ENV_ALIASES.get(canonical)
+    if alias is not None and alias in env:
+        return alias
+    return None
 
 
 @dataclass(frozen=True)
@@ -66,12 +88,13 @@ class PullChannel:
 def _resolve(env: Mapping[str, str], key: str, default: str) -> str:
     """Override if set non-empty, baked default if unset, fail closed if set-but-empty (cleared)."""
 
-    if key not in env:
+    present = _present_key(env, key)
+    if present is None:
         return default
-    value = env[key].strip()
+    value = env[present].strip()
     if not value:
         raise ConfigError(
-            f"{key} is set but empty; refusing to fall back to the default (fail-closed). "
+            f"{present} is set but empty; refusing to fall back to the default (fail-closed). "
             f"Unset it entirely to use the baked default."
         )
     return value
@@ -85,11 +108,12 @@ def resolve_pull_channel(env: Mapping[str, str] | None = None) -> PullChannel:
     signature_url = _resolve(env, ENV_SIG_URL, DEFAULT_SIG_URL)
 
     # Identity: a non-empty override pins an EXACT identity; otherwise the baked regexp.
-    if ENV_IDENTITY in env:
-        exact = env[ENV_IDENTITY].strip()
+    identity_key = _present_key(env, ENV_IDENTITY)
+    if identity_key is not None:
+        exact = env[identity_key].strip()
         if not exact:
             raise ConfigError(
-                f"{ENV_IDENTITY} is set but empty; refusing to drop the identity pin (fail-closed)."
+                f"{identity_key} is set but empty; refusing to drop the identity pin (fail-closed)."
             )
         expected_identity = ExpectedIdentity(identity=exact, issuer=DEFAULT_OIDC_ISSUER)
     else:
@@ -98,11 +122,13 @@ def resolve_pull_channel(env: Mapping[str, str] | None = None) -> PullChannel:
         )
 
     # Optional extra sha pin (defence-in-depth); unset/empty => the signature alone is the anchor.
-    expected_sha256 = (env.get(ENV_SHA) or "").strip() or None
+    sha_key = _present_key(env, ENV_SHA)
+    expected_sha256 = (env.get(sha_key) or "").strip() or None if sha_key else None
 
     # Allow-list = the channel hosts, plus any explicitly authorized redirect-target (CDN) hosts.
+    egress_key = _present_key(env, ENV_EGRESS_HOSTS)
     hosts = {urlsplit(pack_url).hostname or "", urlsplit(signature_url).hostname or ""}
-    for host in (env.get(ENV_EGRESS_HOSTS) or "").split(","):
+    for host in (env.get(egress_key) or "").split(",") if egress_key else []:
         cleaned = host.strip()
         if cleaned:
             hosts.add(cleaned)

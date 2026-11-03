@@ -18,6 +18,28 @@ def test_baked_defaults_pin_the_publisher_regexp_with_no_config() -> None:
     assert "github.com" in channel.egress_hosts
 
 
+def test_legacy_intel_env_names_still_accepted() -> None:
+    """Unit 1.4: a pre-0.4.0 INTEL_ override still resolves via the back-compat alias."""
+
+    channel = config.resolve_pull_channel(env={"INTEL_PACKS_PULL_URL": "https://legacy.example/pack.json"})
+    assert channel.pack_url == "https://legacy.example/pack.json"
+
+
+def test_flp_intel_name_preferred_over_legacy() -> None:
+    channel = config.resolve_pull_channel(
+        env={
+            "INTEL_PACKS_PULL_URL": "https://legacy.example/pack.json",
+            "FLP_INTEL_PACKS_PULL_URL": "https://canonical.example/pack.json",
+        }
+    )
+    assert channel.pack_url == "https://canonical.example/pack.json"
+
+
+def test_legacy_cleared_identity_still_fails_closed() -> None:
+    with pytest.raises(config.ConfigError, match="identity pin"):
+        config.resolve_pull_channel(env={"INTEL_PINNED_IDENTITY": "   "})
+
+
 def test_exact_identity_override_switches_to_exact_pin() -> None:
     channel = config.resolve_pull_channel(env={config.ENV_IDENTITY: "https://example/wf.yml@refs/tags/v9"})
     assert channel.expected_identity.identity == "https://example/wf.yml@refs/tags/v9"
