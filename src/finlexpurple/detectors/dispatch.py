@@ -6,21 +6,18 @@ skipped on a static, parameterless endpoint, and SSRF runs only when a parameter
 looks URL-shaped. Header/response-based detectors (generic/auth misconfig,
 cache poisoning) always run. The fingerprint is accepted for future
 technology-specific narrowing; current relevance is driven by endpoint shape.
+
+Since Unit 1.6 the relevance rules and the detector callables are read from the
+one capability registry (:mod:`finlexpurple.capabilities`) rather than being
+hand-maintained here, so a new class is added by one registry record — with no
+edit to this module.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 
-from finlexpurple.detectors import (
-    auth_misconfig,
-    cache_poisoning,
-    generic_misconfig,
-    idor,
-    sqli,
-    ssrf,
-    xss,
-)
+from finlexpurple import capabilities
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.recon.endpoint_catalog import Endpoint
@@ -34,17 +31,9 @@ def relevant_detectors(endpoint: Endpoint, fingerprint: Fingerprint | None = Non
 
     del fingerprint  # reserved for technology-specific narrowing later
     detectors: list[Detector] = []
-    if endpoint.parameters:
-        detectors.append(sqli.detect)
-        detectors.append(xss.detect)
-        if any(idor.looks_like_id_param(p) for p in endpoint.parameters):
-            detectors.append(idor.detect)
-        if any(ssrf.accepts_url_param(p) for p in endpoint.parameters):
-            detectors.append(ssrf.detect)
-    # Response/header-based checks apply to every endpoint.
-    detectors.append(generic_misconfig.detect)
-    detectors.append(auth_misconfig.detect)
-    detectors.append(cache_poisoning.detect)
+    for capability in capabilities.web_capabilities_for(endpoint):
+        assert capability.detector is not None  # web_capabilities_for guarantees this
+        detectors.append(capability.detector)
     return detectors
 
 
