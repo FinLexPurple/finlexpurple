@@ -3,3 +3,9 @@
 # platform so a Windows checkout (core.autocrlf=true) cannot rewrite it to CRLF
 # and break that hash. Scoped to the pack data only — no repo-wide normalization.
 src/finlexpurple/intel/baseline/pack.json text eol=lf
+
+# Evidence-bundle golden vectors (Unit 1.1): verify-bundle is a forever contract
+# and these are verified byte-for-byte in CI (v1 hashes the exact stored bytes;
+# v0 recomputes a canonical hash). Force LF so a Windows checkout cannot rewrite
+# them to CRLF and break verification. Scoped to the golden files only.
+tests/finlexpurple/evidence/golden/*.bundle.json text eol=lf
