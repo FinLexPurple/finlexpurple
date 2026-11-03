@@ -21,6 +21,7 @@ from finlexpurple.telemetry.install_counter import (
     get_or_create_install_id,
     install_ping_sent,
     mark_install_ping_sent,
+    reset_install_id,
 )
 
 # Stated plainly wherever telemetry is mentioned to the user (§8).
@@ -33,16 +34,27 @@ PURPOSE = (
 
 
 def preview_payloads(install_id: str) -> dict[str, dict[str, Any]]:
-    """The payloads that could be sent, built via the collector (allow-listed)."""
+    """The payloads that could be sent, built via the collector (allow-listed).
+
+    One example per event: the four product events on the versioned envelope, and
+    the pre-existing flat feedback payload.
+    """
 
     return {
         "install": collector.build_install_payload(install_id),
-        "scan_summary (example)": collector.build_scan_summary_payload(
-            total_findings=0,
-            verified=0,
-            verified_percent=0.0,
-            severity_counts={"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0},
-            vulnerability_classes=[],
+        "scan_completed (example)": collector.build_scan_completed_payload(
+            install_id=install_id,
+            web=True,
+            mcp=False,
+            deps=True,
+            container=False,
+            status_counts={"reported": 7, "verified": 2},
+        ),
+        "bundle_created (example)": collector.build_bundle_created_payload(
+            install_id=install_id, signed=True
+        ),
+        "bundle_verified (example)": collector.build_bundle_verified_payload(
+            install_id=install_id, passed=True
         ),
         "feedback (example)": collector.build_feedback_payload(
             run_rating="good", finding_mark="false-positive", vulnerability_class="sqli"
@@ -53,13 +65,24 @@ def preview_payloads(install_id: str) -> dict[str, dict[str, Any]]:
 def describe_telemetry(config: Config, *, install_id: str) -> str:
     """Render the full `telemetry show` text: state, purpose, allow-list, preview."""
 
-    state = "ON" if config.telemetry_enabled else "OFF (default)"
+    opt_out = sender.telemetry_opt_out_active()
+    if opt_out:
+        state = "OFF (opt-out active: FINLEXPURPLE_TELEMETRY/DO_NOT_TRACK)"
+    elif config.telemetry_enabled:
+        state = "ON"
+    else:
+        state = "OFF (default)"
     endpoint = config.telemetry_endpoint or "(not configured — nothing can be sent)"
     lines = [
         f"Telemetry: {state}",
         f"Endpoint:  {endpoint}",
         "",
         PURPOSE,
+        "",
+        (
+            "Opt out any time with 'finlexpurple telemetry off', or set "
+            f"{sender.TELEMETRY_OPT_OUT_ENV}=0 or {sender.DO_NOT_TRACK_ENV}=1 to force it off."
+        ),
         "",
         "Allow-listed fields (the only fields that may ever be sent):",
         "  " + ", ".join(sorted(allowlist.ALLOWED_FIELDS)),
@@ -68,6 +91,16 @@ def describe_telemetry(config: Config, *, install_id: str) -> str:
         json.dumps(preview_payloads(install_id), indent=2, sort_keys=True),
     ]
     return "\n".join(lines)
+
+
+def reset_install_id_text() -> str:
+    """Reset the local install id (and ping marker); report the new id."""
+
+    new_id = reset_install_id()
+    return (
+        f"Install id reset. New id: {new_id}. "
+        "If telemetry is on, the next 'telemetry on' sends one fresh install ping."
+    )
 
 
 def enable_telemetry(env_path: Path) -> str:
