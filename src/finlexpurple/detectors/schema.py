@@ -182,6 +182,16 @@ def compute_fingerprint(
     return f"{FINGERPRINT_PREFIX}{_sha256(canonical)}"
 
 
+def route_template(url: str) -> str:
+    """Public: the normalized, route-templated path of a URL (for report locations).
+
+    Concrete resource ids become ``{id}`` (see :func:`_route_template`), so a
+    structured finding location shows the route, not a single concrete instance.
+    """
+
+    return _route_template(urlsplit(url.strip()).path)
+
+
 def finding_id_slug(finding_id: str) -> str:
     """A filesystem-safe form of a finding id, for evidence/replay/bundle names.
 
@@ -255,6 +265,13 @@ class Finding(BaseModel):
     discovered_at: datetime
     # Populated from Phase 18 onward with the named agent that produced it.
     agent: str | None = None
+    # Structured-location and SBOM fields (Unit 1.3), all optional and defaulted
+    # so pre-1.3 finding dicts still deserialize. A detector sets ``source_file``
+    # /``source_line`` only when a real file anchor exists (never invented), and
+    # ``purl`` only for a dependency/container finding with a real package coord.
+    source_file: str | None = None
+    source_line: int | None = None
+    purl: str | None = None
     # Set by the Phase 11 verification engine: a deterministic record of the
     # replay attempt. None until verification runs.
     verification_log: str | None = None
@@ -274,13 +291,18 @@ class Finding(BaseModel):
         severity: Severity = Severity.MEDIUM,
         agent: str | None = None,
         discovered_at: datetime | None = None,
+        source_file: str | None = None,
+        source_line: int | None = None,
+        purl: str | None = None,
     ) -> Finding:
         """Create a finding with a deterministic id and the mandatory ``reported`` status.
 
         ``payload`` is the specific triggering input (the id is derived from
         method+url+payload). The status is hard-coded to ``reported`` here and is
         intentionally **not** a parameter, so a detector cannot create a finding
-        that is already "verified".
+        that is already "verified". ``source_file``/``source_line`` and ``purl``
+        are set only when a real file anchor or package coordinate exists (Unit
+        1.3); they are never invented.
         """
 
         resolved_headers = dict(headers or {})
@@ -302,6 +324,9 @@ class Finding(BaseModel):
             severity=severity,
             discovered_at=discovered_at or datetime.now(timezone.utc),
             agent=agent,
+            source_file=source_file,
+            source_line=source_line,
+            purl=purl,
         )
 
     def to_dict(self) -> dict[str, Any]:
