@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import AliasChoices, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from finlexpurple.hardware.tiers import ModelTier
@@ -45,23 +45,52 @@ class Config(BaseSettings):
         extra="ignore",
     )
 
-    llm_provider: LLMProvider = Field(default=LLMProvider.OLLAMA, validation_alias="LLM_PROVIDER")
-    ollama_model: str | None = Field(default=None, validation_alias="OLLAMA_MODEL")
-    ollama_host: str = Field(default="http://localhost:11434", validation_alias="OLLAMA_HOST")
-    anthropic_model: str = Field(default="claude-sonnet-5-5", validation_alias="ANTHROPIC_MODEL")
-    openai_model: str = Field(default="gpt-6.1-sol", validation_alias="OPENAI_MODEL")
-    openrouter_model: str = Field(
-        default="openai/gpt-6-luna", validation_alias="OPENROUTER_MODEL"
+    # Env-var naming freeze (Unit 1.4): our own settings are canonically prefixed
+    # ``FLP_`` and each also accepts its pre-0.4.0 bare name as a back-compat alias
+    # (via AliasChoices, canonical first) so existing .env files keep working.
+    # Provider API keys deliberately keep their standard, un-prefixed names — those
+    # are the conventional variables users already export for each SDK.
+    llm_provider: LLMProvider = Field(
+        default=LLMProvider.OLLAMA,
+        validation_alias=AliasChoices("FLP_LLM_PROVIDER", "LLM_PROVIDER"),
     )
-    gemini_model: str = Field(default="gemini-3.8-flash", validation_alias="GEMINI_MODEL")
+    ollama_model: str | None = Field(
+        default=None, validation_alias=AliasChoices("FLP_OLLAMA_MODEL", "OLLAMA_MODEL")
+    )
+    ollama_host: str = Field(
+        default="http://localhost:11434",
+        validation_alias=AliasChoices("FLP_OLLAMA_HOST", "OLLAMA_HOST"),
+    )
+    anthropic_model: str = Field(
+        default="claude-sonnet-5-5",
+        validation_alias=AliasChoices("FLP_ANTHROPIC_MODEL", "ANTHROPIC_MODEL"),
+    )
+    openai_model: str = Field(
+        default="gpt-6.1-sol", validation_alias=AliasChoices("FLP_OPENAI_MODEL", "OPENAI_MODEL")
+    )
+    openrouter_model: str = Field(
+        default="openai/gpt-6-luna",
+        validation_alias=AliasChoices("FLP_OPENROUTER_MODEL", "OPENROUTER_MODEL"),
+    )
+    gemini_model: str = Field(
+        default="gemini-3.8-flash",
+        validation_alias=AliasChoices("FLP_GEMINI_MODEL", "GEMINI_MODEL"),
+    )
     fallback_llm_provider: LLMProvider | None = Field(
-        default=None, validation_alias="FALLBACK_LLM_PROVIDER"
+        default=None,
+        validation_alias=AliasChoices("FLP_FALLBACK_LLM_PROVIDER", "FALLBACK_LLM_PROVIDER"),
     )
     anthropic_api_key: str | None = Field(default=None, validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     openrouter_api_key: str | None = Field(default=None, validation_alias="OPENROUTER_API_KEY")
     gemini_api_key: str | None = Field(default=None, validation_alias="GEMINI_API_KEY")
-    require_human_approval: bool = Field(default=True, validation_alias="REQUIRE_HUMAN_APPROVAL")
+    require_human_approval: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("FLP_REQUIRE_HUMAN_APPROVAL", "REQUIRE_HUMAN_APPROVAL"),
+    )
+    # Telemetry env vars (TELEMETRY_ENABLED / TELEMETRY_ENDPOINT) are frozen in
+    # Unit 1.5 (the telemetry envelope), where the FINLEXPURPLE_TELEMETRY opt-out
+    # convention is also finalized; left on their current names here.
     telemetry_enabled: bool = Field(default=False, validation_alias="TELEMETRY_ENABLED")
     # Where opt-in telemetry is sent; defaults to the public install-counter
     # Worker and is overridable via TELEMETRY_ENDPOINT. Having a default does not
@@ -69,10 +98,14 @@ class Config(BaseSettings):
     telemetry_endpoint: str | None = Field(
         default=DEFAULT_TELEMETRY_ENDPOINT, validation_alias="TELEMETRY_ENDPOINT"
     )
-    model_tier: ModelTier | None = Field(default=None, validation_alias="MODEL_TIER")
+    model_tier: ModelTier | None = Field(
+        default=None, validation_alias=AliasChoices("FLP_MODEL_TIER", "MODEL_TIER")
+    )
     # Default-on dollar spend cap for model usage (§15). Always a real, positive
     # number: the cap is never off, and a looser budget means a larger number.
-    max_spend_usd: float = Field(default=5.0, validation_alias="MAX_SPEND_USD")
+    max_spend_usd: float = Field(
+        default=5.0, validation_alias=AliasChoices("FLP_MAX_SPEND_USD", "MAX_SPEND_USD")
+    )
 
     @field_validator("llm_provider", mode="before")
     @classmethod

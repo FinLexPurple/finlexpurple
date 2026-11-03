@@ -25,6 +25,19 @@ _VARIABLES = (
     "TELEMETRY_ENABLED",
     "MODEL_TIER",
     "FALLBACK_LLM_PROVIDER",
+    "MAX_SPEND_USD",
+    # Unit 1.4 canonical FLP_-prefixed names (cleared too, so tests are isolated).
+    "FLP_LLM_PROVIDER",
+    "FLP_OLLAMA_MODEL",
+    "FLP_OLLAMA_HOST",
+    "FLP_ANTHROPIC_MODEL",
+    "FLP_OPENAI_MODEL",
+    "FLP_OPENROUTER_MODEL",
+    "FLP_GEMINI_MODEL",
+    "FLP_FALLBACK_LLM_PROVIDER",
+    "FLP_MODEL_TIER",
+    "FLP_REQUIRE_HUMAN_APPROVAL",
+    "FLP_MAX_SPEND_USD",
 )
 
 
@@ -49,6 +62,45 @@ def test_loads_dotenv_from_explicit_current_directory(tmp_path) -> None:
     config = Config.load(env_file)
 
     assert config.ollama_model == "local-test"
+
+
+def test_flp_prefixed_env_names_are_accepted(tmp_path) -> None:
+    """Unit 1.4: the canonical FLP_-prefixed names are honoured."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "FLP_LLM_PROVIDER=ollama\nFLP_OLLAMA_MODEL=flp-model\nFLP_MAX_SPEND_USD=3.50\n",
+        encoding="utf-8",
+    )
+    config = Config.load(env_file)
+    assert config.ollama_model == "flp-model"
+    assert config.max_spend_usd == 3.50
+
+
+def test_legacy_bare_env_names_still_accepted(tmp_path) -> None:
+    """Back-compat: a pre-0.4.0 .env with bare names keeps working."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("OLLAMA_MODEL=legacy-model\nMAX_SPEND_USD=2.0\n", encoding="utf-8")
+    config = Config.load(env_file)
+    assert config.ollama_model == "legacy-model"
+    assert config.max_spend_usd == 2.0
+
+
+def test_flp_name_preferred_when_both_present(tmp_path) -> None:
+    """When both the FLP_ name and its legacy alias are set, the canonical one wins."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("OLLAMA_MODEL=legacy\nFLP_OLLAMA_MODEL=canonical\n", encoding="utf-8")
+    assert Config.load(env_file).ollama_model == "canonical"
+
+
+def test_api_keys_keep_their_standard_unprefixed_names(tmp_path) -> None:
+    """Provider API keys keep their conventional, un-prefixed names."""
+
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_API_KEY=sk-standard\n", encoding="utf-8")
+    assert Config.load(env_file).anthropic_api_key == "sk-standard"
 
 
 def test_provider_models_have_overridable_defaults(tmp_path) -> None:
