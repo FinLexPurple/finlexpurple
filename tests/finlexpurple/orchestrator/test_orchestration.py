@@ -28,6 +28,7 @@ from finlexpurple.orchestrator.executor import Executor
 from finlexpurple.orchestrator.iteration_limits import IterationLimits
 from finlexpurple.orchestrator.persistence import create_run_directory, load_state, save_state
 from finlexpurple.orchestrator.planner import Planner
+from finlexpurple.orchestrator.runstore import JsonRunStore
 from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
 from finlexpurple.providers.base import LLMProvider, LLMResponse, Message
 
@@ -146,12 +147,13 @@ def test_engine_completes_and_resumes_without_repeating_completed_actions(tmp_pa
     """A finished run reloads as terminal: re-running repeats no completed action."""
 
     state, path = _state(tmp_path)
-    result = run(state, path, limits=IterationLimits(20, 50, 1800))
+    store = JsonRunStore(reports_dir=tmp_path)
+    result = run(state, store, limits=IterationLimits(20, 50, 1800))
     assert result.current_stage == "report"
     assert result.counters["iterations"] == 1
     assert result.counters["tool_calls"] == 1
     assert result.counters["elapsed_seconds"] >= 0
-    resumed = run(load_state(path), path, limits=IterationLimits(20, 50, 1800))
+    resumed = run(load_state(path), store, limits=IterationLimits(20, 50, 1800))
     assert resumed.counters == result.counters
     assert len(resumed.observed_results) == 1
 
@@ -168,7 +170,7 @@ def test_iteration_limit_stops_repeating_planner_and_persists(tmp_path: Path) ->
             return [{"action_id": f"again-{len(completed)}", "detector": "phase8_stub", "endpoint": catalog[0]}]
 
     result = run(
-        state, path, planner=NeverDonePlanner(),
+        state, JsonRunStore(reports_dir=tmp_path), planner=NeverDonePlanner(),
         limits=IterationLimits(max_iterations=2, max_tool_calls=50, max_wall_clock_seconds=30),
     )
     assert result.stop_reason == "iteration limit reached (2)"
@@ -192,15 +194,16 @@ def test_kill_switch_halts_at_a_safe_point_and_persists(tmp_path: Path) -> None:
     from finlexpurple.security.safe_failure import SafeFailureController
 
     state, path = _state(tmp_path)
+    store = JsonRunStore(reports_dir=tmp_path)
     controller = SafeFailureController()
     controller.request_stop()  # operator engaged the kill switch
-    result = run(state, path, controller=controller, limits=IterationLimits(20, 50, 1800))
+    result = run(state, store, controller=controller, limits=IterationLimits(20, 50, 1800))
 
     assert result.stop_reason == "stopped by kill switch at a safe point"
     assert result.current_stage == "recon"  # halted before advancing, at a safe boundary
     # State was persisted and is resumable; a fresh run with no stop completes.
     assert load_state(path).stop_reason == "stopped by kill switch at a safe point"
-    resumed = run(load_state(path), path, limits=IterationLimits(20, 50, 1800))
+    resumed = run(load_state(path), store, limits=IterationLimits(20, 50, 1800))
     assert resumed.current_stage == "report"
 
 

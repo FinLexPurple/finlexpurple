@@ -15,13 +15,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 from finlexpurple.orchestrator.executor import Executor
 from finlexpurple.orchestrator.iteration_limits import IterationLimits
-from finlexpurple.orchestrator.persistence import create_run_directory, save_state
 from finlexpurple.orchestrator.planner import Planner
+from finlexpurple.orchestrator.runstore import RunHandle, RunStore
 from finlexpurple.orchestrator.state import RunState
 from finlexpurple.recon.crawler import ReconResult
 from finlexpurple.security.budget_guard import BudgetGuard, SpendBudgetExceededError
@@ -61,14 +60,20 @@ def state_from_recon(
     canonical_target: str,
     recon: ReconResult,
     *,
-    reports_dir: Path | None = None,
-) -> tuple[RunState, Path]:
-    """Create initial persisted state after the Phase 5 recon stage."""
+    store: RunStore,
+) -> tuple[RunState, RunHandle]:
+    """Create initial state after the Phase 5 recon stage, via the run store.
 
-    run_id, directory = create_run_directory(canonical_target, reports_dir=reports_dir)
+    The run id + artifact directory are reserved through the injected
+    :class:`RunStore` (so the backend — JSON or SQLite — owns id allocation);
+    the returned handle gives the caller the directory for the report/evidence
+    tree. The state itself is not persisted here; the engine's loop persists it.
+    """
+
+    handle = store.create_run(canonical_target)
     catalog, parameter_names = _safe_endpoint_records(recon)
     state = RunState(
-        run_id=run_id,
+        run_id=handle.run_id,
         canonical_target=canonical_target,
         current_stage="recon",
         catalog=catalog,
@@ -81,12 +86,12 @@ def state_from_recon(
         warnings=list(recon.warnings),
         counters={"iterations": 0, "tool_calls": 0, "elapsed_seconds": 0},
     )
-    return state, directory / "run-state.json"
+    return state, handle
 
 
 def run(
     state: RunState,
-    state_path: Path,
+    store: RunStore,
     *,
     planner: Planner | None = None,
     executor: Executor | None = None,
@@ -96,9 +101,10 @@ def run(
 ) -> RunState:
     """Run or resume state transitions, saving after each completed stage.
 
-    Drives ``state`` from its current stage toward ``report``, persisting to
-    ``state_path`` after every transition and after every detector call, so the
-    run is resumable at any interruption point. ``planner``/``executor``/
+    Drives ``state`` from its current stage toward ``report``, persisting through
+    the injected :class:`RunStore` after every transition and after every detector
+    call, so the run is resumable at any interruption point regardless of the
+    storage backend. ``planner``/``executor``/
     ``limits`` are injectable (defaults are constructed here) to keep the loop
     testable. If a limit is hit, the loop records ``state.stop_reason``,
     persists, and returns early; a run already at ``report`` is returned
@@ -150,7 +156,7 @@ def run(
         state.counters["elapsed_seconds"] = elapsed()
         if budget_guard is not None:
             state.spend_usd = budget_guard.spent
-        save_state(state_path, state)
+        store.save_state(state)
 
     def persist_transition(next_stage: str) -> None:
         """Advance to ``next_stage`` and persist, so the move survives a crash."""

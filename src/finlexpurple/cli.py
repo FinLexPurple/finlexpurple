@@ -43,6 +43,7 @@ from finlexpurple.orchestrator.iteration_limits import (
 )
 from finlexpurple.orchestrator.persistence import create_run_directory, load_state
 from finlexpurple.orchestrator.planner import Planner
+from finlexpurple.orchestrator.runstore import JsonRunStore, RunStore, get_run_store
 from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
 from finlexpurple.providers.factory import create_provider
 from finlexpurple.recon.crawler import ReconError, run_recon
@@ -188,6 +189,21 @@ def _first_env(*names: str) -> tuple[str, str] | None:
     return None
 
 
+def _build_run_store(*, reports_dir: Path | None = None) -> RunStore:
+    """Build the run-state store selected by ``FLP_RUN_STORE`` (default: json).
+
+    A bad value exits 2 (a usage error) rather than silently falling back, so a
+    typo is caught loudly. SQLite is fully available by setting the env var.
+    """
+
+    found = _first_env("FLP_RUN_STORE")
+    try:
+        return get_run_store(found[1] if found else None, reports_dir=reports_dir)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+
+
 def _recover_bool_env(*names: str, default: bool) -> bool:
     """Parse a boolean safety env var with Config's own validator; a bad value errors clearly."""
 
@@ -245,7 +261,8 @@ def _load_safety_settings() -> _SafetySettings:
 
 def _orchestrate_and_report(
     state: RunState,
-    state_path: Path,
+    store: RunStore,
+    run_dir: Path,
     normalized_target: Target,
     confirmed_scope: ScopeDefinition,
     fix_mode_value: str | None,
@@ -267,7 +284,7 @@ def _orchestrate_and_report(
     halts gracefully at a safe point.
     """
 
-    audit = AuditLog(state_path.parent / "audit.jsonl")
+    audit = AuditLog(run_dir / "audit.jsonl")
     attested_at = confirmed_scope.first_confirmed_at or datetime.now(timezone.utc)
     record_attestation(audit, target=normalized_target.canonical, attested_at=attested_at)
     typer.echo(
@@ -415,7 +432,7 @@ def _orchestrate_and_report(
         with kill_switch, canary_context:
             final_state = run_orchestration(
                 state,
-                state_path,
+                store,
                 planner=Planner(provider),
                 executor=executor,
                 limits=limits,
@@ -429,7 +446,7 @@ def _orchestrate_and_report(
     if final_state.stop_reason:
         typer.echo(f"Scan paused at stage {final_state.current_stage}: {final_state.stop_reason}")
         typer.echo(f"Model spend so far: ${final_state.spend_usd:.4f} of ${budget_guard.max_spend_usd:.2f}.")
-        typer.echo(f"Resume with: finlexpurple resume {state_path.parent.name}")
+        typer.echo(f"Resume with: finlexpurple resume {state.run_id}")
         return
     if origin is None:
         typer.echo(
@@ -440,7 +457,7 @@ def _orchestrate_and_report(
     paths = write_report(
         collected,
         target=state.canonical_target,
-        out_dir=output or state_path.parent,
+        out_dir=output or run_dir,
         run_id=state.run_id,
         formats=report_formats,
     )
@@ -691,10 +708,14 @@ def scan(
         typer.echo(f"--fail-on must be one of {list(_FAIL_ON_CHOICES)}.", err=True)
         raise typer.Exit(code=2)
     state = None
-    state_path: Path
+    store: RunStore
+    run_dir: Path
     if resume is not None:
         state, normalized_target = _load_and_validate_resume(resume)
-        state_path = resume
+        # `--resume <path>` is the JSON-file convenience: persist back to the same
+        # run directory so a resumed run writes where it was paused.
+        store = JsonRunStore(reports_dir=resume.parent.parent)
+        run_dir = resume.parent
     else:
         assert target is not None
         try:
@@ -702,6 +723,7 @@ def scan(
         except InvalidTargetError as exc:
             typer.echo(f"Invalid target: {exc}", err=True)
             raise typer.Exit(code=2) from None
+        store = _build_run_store()
 
     if normalized_target.kind == "directory":
         typer.echo("Web recon requires a URL or IP/CIDR scope; local directory recon is not implemented.", err=True)
@@ -734,7 +756,8 @@ def scan(
         except (ReconError, OutOfScopeError) as exc:
             typer.echo(f"Recon could not start safely: {exc}", err=True)
             raise typer.Exit(code=1) from None
-        state, state_path = state_from_recon(normalized_target.canonical, result)
+        state, handle = state_from_recon(normalized_target.canonical, result, store=store)
+        run_dir = handle.directory
         typer.echo(f"Recon: discovered {len(result.catalog)} endpoints.")
         for endpoint in result.catalog.endpoints:
             typer.echo(f"  {endpoint.method} {endpoint.url}")
@@ -754,7 +777,8 @@ def scan(
 
     _orchestrate_and_report(
         state,
-        state_path,
+        store,
+        run_dir,
         normalized_target,
         confirmed_scope,
         fix_mode,
@@ -929,14 +953,30 @@ def resume(
     if "/" in run_id or "\\" in run_id or ".." in run_id:
         typer.echo("Invalid run id.", err=True)
         raise typer.Exit(code=2)
-    state_path = Path.cwd() / "finlexpurple-reports" / run_id / "run-state.json"
-    if not state_path.is_file():
-        typer.echo(
-            f"No run-state.json found for run id {run_id!r} under finlexpurple-reports/.",
-            err=True,
-        )
-        raise typer.Exit(code=2)
-    state, normalized_target = _load_and_validate_resume(state_path)
+    reports_root = Path.cwd() / "finlexpurple-reports"
+    store = _build_run_store(reports_dir=reports_root)
+    run_dir = store.run_directory(run_id)
+    if isinstance(store, JsonRunStore):
+        # JSON backend: resolve the file and keep the established not-found message.
+        state_path = run_dir / "run-state.json"
+        if not state_path.is_file():
+            typer.echo(
+                f"No run-state.json found for run id {run_id!r} under finlexpurple-reports/.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+        state, normalized_target = _load_and_validate_resume(state_path)
+    else:
+        # SQLite (or any non-file) backend: load by id through the store.
+        try:
+            state = store.load_state(run_id)
+            run_id_for_resume(state)
+            normalized_target = Target.parse(state.canonical_target)
+            if state.run_id != run_id or normalized_target.canonical != state.canonical_target:
+                raise InvalidRunStateError("Cannot resume: stored run does not match its run id.")
+        except (InvalidRunStateError, ValueError) as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from None
     try:
         confirmed_scope = confirm_scope(normalized_target)
     except ScopeStorageError as exc:
@@ -945,7 +985,7 @@ def resume(
     if confirmed_scope is None:
         typer.echo("Scope was not confirmed; nothing to resume.", err=True)
         raise typer.Exit(code=1)
-    _orchestrate_and_report(state, state_path, normalized_target, confirmed_scope, None)
+    _orchestrate_and_report(state, store, run_dir, normalized_target, confirmed_scope, None)
 
 
 @app.command(name="verify-bundle")

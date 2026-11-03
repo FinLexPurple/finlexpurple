@@ -150,20 +150,20 @@ def test_low_spend_cap_stops_run_cleanly_and_resumably(tmp_path: Path) -> None:
     planner = Planner(metered)
 
     state = _state_with_catalog(3)
-    state_path = tmp_path / "run-state.json"
+    from finlexpurple.orchestrator.runstore import JsonRunStore
 
-    final = engine.run(state, state_path, planner=planner, budget_guard=guard)
+    store = JsonRunStore(reports_dir=tmp_path)
+
+    final = engine.run(state, store, planner=planner, budget_guard=guard)
 
     # Stopped, not finished: a clear spend-cap reason, state persisted to disk.
     assert final.current_stage != "report"
     assert final.stop_reason is not None and "Spend cap" in final.stop_reason
-    assert state_path.exists()
+    assert (store.run_directory(state.run_id) / "run-state.json").exists()
     assert final.spend_usd > 0
 
     # Resumable: reload the persisted state and confirm spend carried across.
-    from finlexpurple.orchestrator.persistence import load_state
-
-    reloaded = load_state(state_path)
+    reloaded = store.load_state(state.run_id)
     assert reloaded.spend_usd == pytest.approx(final.spend_usd)
     assert reloaded.current_stage == final.current_stage
 
@@ -171,7 +171,7 @@ def test_low_spend_cap_stops_run_cleanly_and_resumably(tmp_path: Path) -> None:
     # advance — the cap spans the whole run rather than resetting.
     resume_guard = BudgetGuard(1.0)
     resumed = engine.run(
-        reloaded, state_path, planner=Planner(MeteredProvider(_StubProvider(expensive), resume_guard)),
+        reloaded, store, planner=Planner(MeteredProvider(_StubProvider(expensive), resume_guard)),
         budget_guard=resume_guard,
     )
     assert resumed.current_stage != "report"
