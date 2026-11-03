@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://finlexpurple.com/report/v1/report.schema.json",
+  "title": "FinLexPurple report.json (schema_version 1)",
+  "description": "The frozen public contract for a scan report. Consumers MUST ignore unknown fields; minor versions only add optional fields; an unknown finding 'status' value MUST be treated as 'inconclusive'; 'verified'/'human_confirmed' are never renamed. All paths are relative/relocatable - no absolute local path appears here.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema_version",
+    "tool",
+    "run_id",
+    "target",
+    "started_at",
+    "generated_at",
+    "summary",
+    "rules",
+    "findings"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "tool": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+    "run_id": { "type": "string", "minLength": 1 },
+    "target": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["raw"],
+      "properties": {
+        "raw": { "type": "string" },
+        "scheme": { "type": "string" },
+        "host": { "type": "string" },
+        "port": { "type": "integer" }
+      }
+    },
+    "started_at": { "type": "string", "description": "RFC 3339 UTC timestamp." },
+    "generated_at": { "type": "string", "description": "RFC 3339 UTC timestamp." },
+    "summary": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["total", "by_severity", "by_status", "verified", "verified_percent"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "by_severity": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "by_status": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "verified": { "type": "integer", "minimum": 0 },
+        "verified_percent": { "type": "number" }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "description": "Map of rule_id -> rule record for the rules used in this report.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["rule_id", "title", "description", "default_severity", "family"],
+        "properties": {
+          "rule_id": { "type": "string" },
+          "title": { "type": "string" },
+          "description": { "type": "string" },
+          "default_severity": { "type": "string" },
+          "family": { "type": "string" }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "finding_id",
+        "fingerprint",
+        "vulnerability_class",
+        "rule_id",
+        "method",
+        "url",
+        "payload",
+        "evidence_hash",
+        "status",
+        "severity",
+        "discovered_at",
+        "location"
+      ],
+      "properties": {
+        "finding_id": { "type": "string", "pattern": "^flp1:sha256:[0-9a-f]{64}$" },
+        "fingerprint": { "type": "string" },
+        "vulnerability_class": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "method": { "type": "string" },
+        "url": { "type": "string" },
+        "payload": { "type": "string" },
+        "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+        "body": { "type": ["string", "null"] },
+        "response_snapshot": { "type": ["string", "null"] },
+        "expected_signal": { "type": "string" },
+        "evidence_hash": { "type": "string" },
+        "status": {
+          "type": "string",
+          "description": "An unknown value MUST be treated by consumers as 'inconclusive'."
+        },
+        "severity": { "type": "string" },
+        "discovered_at": { "type": "string" },
+        "agent": { "type": ["string", "null"] },
+        "source_file": {
+          "type": ["string", "null"],
+          "description": "A real, relative source file anchor, or null; never invented."
+        },
+        "source_line": { "type": ["integer", "null"] },
+        "purl": {
+          "type": ["string", "null"],
+          "description": "A package URL for a dependency/container finding, or null."
+        },
+        "verification_log": { "type": ["string", "null"] },
+        "location": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["url", "method", "route_template"],
+          "properties": {
+            "url": { "type": "string" },
+            "method": { "type": "string" },
+            "route_template": { "type": "string" },
+            "source_file": { "type": ["string", "null"] },
+            "source_line": { "type": ["integer", "null"] }
+          }
+        }
+      }
+    }
+  }
+}
