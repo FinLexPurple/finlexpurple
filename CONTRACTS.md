@@ -76,8 +76,21 @@ set), so existing `.env` files keep working.
 **Provider API keys keep their standard, un-prefixed names**: `ANTHROPIC_API_KEY`,
 `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY`.
 
-Telemetry env vars (`TELEMETRY_ENABLED`, `TELEMETRY_ENDPOINT`) and the telemetry
-opt-out convention are frozen separately with the telemetry envelope.
+### Telemetry (opt-in, off by default)
+
+| Variable | Meaning |
+| --- | --- |
+| `TELEMETRY_ENABLED` | Consent. `false` (default) = nothing is ever sent. Set by `telemetry on`/`off`. |
+| `TELEMETRY_ENDPOINT` | Where opt-in telemetry is sent; a receiver must ignore unknown envelope fields. |
+| `FINLEXPURPLE_TELEMETRY` | Opt-out kill-switch: `0`/`false`/`off`/`no`/`disabled` forces telemetry **off even if enabled**. |
+| `DO_NOT_TRACK` | The common cross-tool convention; `1`/`true`/`yes`/`on` forces telemetry off. |
+
+Telemetry is sent only by an explicit command, only while on, and never in the
+background. The wire format is one versioned envelope (`schema_version` 1) with a
+nested, allow-listed `props` map; the complete field list is in `PRIVACY.md`.
+Events: `install`, `scan_completed`, `bundle_created`, `bundle_verified` (plus
+the pre-existing flat `feedback` payload). `finlexpurple telemetry reset`
+regenerates the random local install id.
 
 ## Run-directory layout
 
