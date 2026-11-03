@@ -78,6 +78,11 @@ BUNDLE_TYPE_URI = "https://finlexpurple.com/evidence-bundle/v1"
 IN_TOTO_STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 DSSE_PAYLOAD_TYPE = "application/vnd.in-toto+json"
 
+# Frozen run-directory contract (Unit 1.4): the evidence bundle's filename suffix
+# and documented media type, so a consumer can recognize and serve a bundle.
+BUNDLE_FILENAME_SUFFIX = ".bundle.json"
+BUNDLE_MEDIA_TYPE = "application/vnd.finlexpurple.evidence-bundle+json"
+
 
 class BundleFormatError(ValueError):
     """A file is not a well-formed evidence bundle."""
