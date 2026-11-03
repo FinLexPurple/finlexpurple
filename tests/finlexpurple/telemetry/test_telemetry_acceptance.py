@@ -32,19 +32,20 @@ def test_item2_disabled_default_sends_nothing() -> None:
 
 
 def test_item3_no_target_or_evidence_in_a_realistic_scan_payload() -> None:
-    # Build from the real 0.3.0-style finding set (sqli x3, ssrf, idor, xss, misconfig).
-    payload = collector.build_scan_summary_payload(
-        total_findings=18, verified=4, verified_percent=22.2,
-        severity_counts={"critical": 0, "high": 4, "medium": 2, "low": 6, "info": 6},
-        vulnerability_classes=["sqli", "ssrf", "sqli", "sqli", "idor", "xss"] + ["generic_misconfig"] * 12,
+    # A realistic scan: surfaces ran, 18 findings, 4 verified.
+    payload = collector.build_scan_completed_payload(
+        install_id="11111111-1111-4111-8111-111111111111",
+        web=True, mcp=False, deps=True, container=False,
+        status_counts={"reported": 18, "verified": 4, "inconclusive": 2},
     )
     serialized = str(payload)
     for leak in ("127.0.0.1", "/login", "/lookup", "http://", "q=", "api_key", "password", "SELECT"):
         assert leak not in serialized
-    assert set(payload) <= allowlist.ALLOWED_FIELDS
+    assert allowlist.disallowed_keys(payload) == set()
 
 
-def test_item4_install_payload_is_one_random_uuid_only() -> None:
+def test_item4_install_payload_is_envelope_plus_one_random_uuid() -> None:
     payload = collector.build_install_payload("22222222-2222-4222-8222-222222222222")
-    assert set(payload) == {"event", "install_id"}
+    assert allowlist.disallowed_keys(payload) == set()
+    assert payload["event"] == "install" and payload["props"] == {}
     assert uuid.UUID(payload["install_id"]).version == 4
