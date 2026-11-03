@@ -24,6 +24,7 @@ from pathlib import Path
 
 from finlexpurple.detectors.schema import Finding, FindingStatus, finding_id_slug
 from finlexpurple.evidence.bundle import build_bundle_v1, bundle_content_hash, dumps_bundle
+from finlexpurple.orchestrator.ulid import ulid_timestamp_ms
 from finlexpurple.reporting.aggregate import summarize
 from finlexpurple.reporting.badge import badge_for
 from finlexpurple.reporting.narrative import Explainer, build_narrative, suggested_fix
@@ -52,6 +53,22 @@ def _slug(target: str) -> str:
     return (slug or "target")[:80]
 
 
+def _started_at(run_id: str, fallback: datetime) -> datetime:
+    """An honest run-start time: decode the ULID tail of ``run_id`` if present.
+
+    A run id is ``<slug>-<hash8>-<ULID>``; the ULID encodes the millisecond the
+    run directory was created, which is the real start. If ``run_id`` has no
+    valid ULID tail (e.g. a test passed a bare name), fall back to ``fallback``
+    rather than inventing an earlier time.
+    """
+
+    tail = run_id.rsplit("-", 1)[-1]
+    try:
+        return datetime.fromtimestamp(ulid_timestamp_ms(tail) / 1000, tz=timezone.utc)
+    except (ValueError, OverflowError, OSError):
+        return fallback
+
+
 def _write_owner_only(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
     ensure_owner_only(path)
@@ -65,13 +82,17 @@ def write_report(
     out_dir: Path | None = None,
     explainer: Explainer | None = None,
     now: datetime | None = None,
+    run_id: str | None = None,
 ) -> ReportPaths:
     """Write the full report tree for ``findings`` and return its paths.
 
     By default the tree is created under ``out_root/<target>-<timestamp>/``. When
     ``out_dir`` is given it is used directly (no ``<target>-<timestamp>`` subdir),
     so a caller such as ``scan`` can place the report inside an existing run
-    directory alongside ``run-state.json``.
+    directory alongside ``run-state.json``. ``run_id`` stamps ``report.json`` and
+    gives its ``started_at`` an honest value decoded from the run id's ULID tail;
+    when absent the directory name is used and ``started_at`` falls back to the
+    generation time.
     """
 
     stamp = now or datetime.now(timezone.utc)
@@ -139,9 +160,17 @@ def write_report(
     summary = summarize(findings)
     report_json = directory / "report.json"
     report_md = directory / "report.md"
+    resolved_run_id = run_id or directory.name
     _write_owner_only(
         report_json,
-        render_json(target=target, generated_at=stamp.isoformat(), summary=summary, findings=findings),
+        render_json(
+            target=target,
+            run_id=resolved_run_id,
+            started_at=_started_at(resolved_run_id, stamp).isoformat(),
+            generated_at=stamp.isoformat(),
+            summary=summary,
+            findings=findings,
+        ),
     )
     _write_owner_only(
         report_md,
