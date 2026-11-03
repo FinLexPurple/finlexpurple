@@ -44,6 +44,7 @@ def test_parse_normalizes_vulnerabilities_to_findings() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.vulnerability_class == "vulnerable_dependency"
+    assert f.purl and f.purl.startswith("pkg:")  # Unit 1.3: a real package coordinate
     assert f.severity is Severity.HIGH
     assert "GHSA-x84v-xcm2-53pg" in f.expected_signal
 

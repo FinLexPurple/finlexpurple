@@ -107,6 +107,8 @@ def parse_osv_output(raw: str, *, agent: str = "supplychain") -> list[Finding]:
                         vulnerability_class="vulnerable_dependency",
                         method="SCA",
                         url=f"pkg:{ecosystem}/{name}@{version}" if ecosystem else source_path,
+                        # purl only when the ecosystem is known; never invented.
+                        purl=f"pkg:{ecosystem}/{name}@{version}" if ecosystem else None,
                         payload=f"{name}@{version}:{vuln_id}",
                         # Verbatim tool data as evidence — not a paraphrase.
                         response_snapshot=json.dumps(vuln, sort_keys=True)[:_MAX_SNAPSHOT],
