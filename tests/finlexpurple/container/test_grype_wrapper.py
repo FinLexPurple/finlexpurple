@@ -18,7 +18,8 @@ _GRYPE_JSON = json.dumps(
                     "severity": "High",
                     "description": "openssl SM2 decryption buffer overflow",
                 },
-                "artifact": {"name": "openssl", "version": "1.1.1d", "type": "deb"},
+                "artifact": {"name": "openssl", "version": "1.1.1d", "type": "deb",
+                             "purl": "pkg:deb/debian/openssl@1.1.1d"},
             }
         ]
     }
@@ -29,6 +30,7 @@ def test_parse_normalizes_and_maps_severity() -> None:
     findings = parse_grype_output(_GRYPE_JSON)
     assert len(findings) == 1
     assert findings[0].severity is Severity.HIGH
+    assert findings[0].purl == "pkg:deb/debian/openssl@1.1.1d"  # Unit 1.3: grype's own purl
     assert "CVE-2021-3711" in findings[0].expected_signal
     assert findings[0].payload == "openssl@1.1.1d:CVE-2021-3711"
 

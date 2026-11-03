@@ -68,6 +68,8 @@ def parse_grype_output(raw: str, *, agent: str = "container") -> list[Finding]:
                 vulnerability_class="container_image_vuln",
                 method="IMAGE",
                 url=f"image:{name}@{version}" if name else "image",
+                # grype carries a real package URL on the artifact; use it as-is.
+                purl=str(artifact.get("purl")) or None,
                 payload=f"{name}@{version}:{vuln_id}",
                 response_snapshot=json.dumps(match, sort_keys=True)[:_MAX_SNAPSHOT],
                 expected_signal=f"{vuln_id}: {vuln.get('description', '')}".strip(),
