@@ -1,0 +1,31 @@
+{
+  "bundle_format": "flp-bundle/v1",
+  "dsse": {
+    "payload": "eyJfdHlwZSI6Imh0dHBzOi8vaW4tdG90by5pby9TdGF0ZW1lbnQvdjEiLCJwcmVkaWNhdGUiOnsiYnVuZGxlX2Zvcm1hdCI6ImZscC1idW5kbGUvdjEiLCJjcmVhdGVkX2F0IjoiMjAyNi0xMS0wM1QwMDowMDowMCswMDowMCIsImZpbmRpbmciOnsiYWdlbnQiOm51bGwsImJvZHkiOiJ7XCJpdGVtXCI6XCJza3UtMVwiLFwicHJpY2VcIjpcIjAuMDFcIn0iLCJkaXNjb3ZlcmVkX2F0IjoiMjAyNi0xMS0wM1QxMDoxNjozMS4wMzEwNDJaIiwiZXZpZGVuY2VfaGFzaCI6ImQ3ZmE1OWMzY2QwYjVkMjc4NTBlNjllZGFjYTU3OTFmNzU5YmY0YmM1NDUxMWNiY2I2OGJkNjE4NWVmYTk0ZjgiLCJleHBlY3RlZF9zaWduYWwiOiJjaGFyZ2VkIGFtb3VudCBlcXVhbHMgdGhlIGF0dGFja2VyLXN1cHBsaWVkIHByaWNlIiwiZmluZGluZ19pZCI6ImVhNzNmNjA1NzAzMWI5ZjMxMzMyMWI1YzdlZDcyOTJlNzg5YTY0YzA4MTg4MjFjNGM2NmQ5YTY2ZDIyMjVmYjkiLCJoZWFkZXJzIjp7fSwibWV0aG9kIjoiUE9TVCIsInBheWxvYWQiOiJ7XCJpdGVtXCI6XCJza3UtMVwiLFwicHJpY2VcIjpcIjAuMDFcIn0iLCJyZXNwb25zZV9zbmFwc2hvdCI6IntcIm9yZGVyX2lkXCI6XCJvcmQtNzc3XCIsXCJjaGFyZ2VkXCI6XCIwLjAxXCJ9Iiwic2V2ZXJpdHkiOiJtZWRpdW0iLCJzdGF0dXMiOiJ2ZXJpZmllZCIsInVybCI6Imh0dHA6Ly8xMjcuMC4wLjE6NTAwMC9hcGkvY2hlY2tvdXQiLCJ2ZXJpZmljYXRpb25fbG9nIjoiUmVwbGF5ZWQgUE9TVCAvYXBpL2NoZWNrb3V0IHdpdGggcHJpY2U9MC4wMTsgb3JkZXItc3RhdHVzIG9yYWNsZSBzaG93cyBjaGFyZ2VkPTAuMDEgKGR1cmFibGUpLiBSRVBST0RVQ0VELiIsInZ1bG5lcmFiaWxpdHlfY2xhc3MiOiJwcmljZV90YW1wZXJpbmcifSwiaGFzaF9pbnB1dHMiOnsiY2Fub25pY2FsaXphdGlvbiI6Im5vbmUgKHRoZSBleGFjdCBzZXJpYWxpemVkIFN0YXRlbWVudCBieXRlcyBhcmUgc3RvcmVkIGFuZCBzaWduZWQ7IHZlcmlmaWNhdGlvbiBuZXZlciByZS1zZXJpYWxpemVzKSIsImV4Y2x1ZGVkX3ZvbGF0aWxlIjpbIm5vdGhpbmcgaXMgZXhjbHVkZWQgZnJvbSB0aGUgc3RvcmVkIHBheWxvYWQgZGlnZXN0OyB2b2xhdGlsZSB2YWx1ZXMgKGNyZWF0ZWRfYXQsIHJlc3BvbnNlIERhdGUsIG5vbmNlcywgc2Vzc2lvbiBjb29raWVzLCBDU1JGIHRva2VucykgYXJlIHJlZGFjdGVkIGF0IGNhcHR1cmUgKHNlZSAncmVkYWN0aW9uJykgYW5kICdjcmVhdGVkX2F0JyBpcyBrZXB0IG91dCBvZiB0aGUgc3ViamVjdCBkaWdlc3Qgb25seSJdLCJpbmNsdWRlZCI6WyJ0aGUgZW50aXJlIGluLXRvdG8gU3RhdGVtZW50IGJ5dGVzOiBfdHlwZSwgc3ViamVjdCAoZmluZGluZ19pZCArIGV2aWRlbmNlX2hhc2gpLCBwcmVkaWNhdGVUeXBlLCBhbmQgdGhlIGZ1bGwgcHJlZGljYXRlIChmaW5kaW5nLCByZXBsYXlfbG9nLCByZWRhY3Rpb24gcmVjb3JkLCB0b29sKSJdLCJzaWduZWRfb2JqZWN0IjoiRFNTRSBQQUUgb3ZlciB0aGlzIGluLXRvdG8gU3RhdGVtZW50J3MgYnl0ZXMifSwicmVkYWN0aW9uIjp7ImZpZWxkcyI6WyJBdXRob3JpemF0aW9uIiwiQ29va2llIl0sInJlZGFjdGVkIjp0cnVlfSwicmVwbGF5X2xvZyI6IlJlcGxheWVkIFBPU1QgL2FwaS9jaGVja291dCB3aXRoIHByaWNlPTAuMDE7IG9yZGVyLXN0YXR1cyBvcmFjbGUgc2hvd3MgY2hhcmdlZD0wLjAxIChkdXJhYmxlKS4gUkVQUk9EVUNFRC4iLCJ0b29sIjp7Im5hbWUiOiJmaW5sZXhwdXJwbGUiLCJ2ZXJzaW9uIjoiMC40LjBiMSJ9fSwicHJlZGljYXRlVHlwZSI6Imh0dHBzOi8vZmlubGV4cHVycGxlLmNvbS9ldmlkZW5jZS1idW5kbGUvdjEiLCJzdWJqZWN0IjpbeyJkaWdlc3QiOnsic2hhMjU2IjoiZDdmYTU5YzNjZDBiNWQyNzg1MGU2OWVkYWNhNTc5MWY3NTliZjRiYzU0NTExY2JjYjY4YmQ2MTg1ZWZhOTRmOCJ9LCJuYW1lIjoiZWE3M2Y2MDU3MDMxYjlmMzEzMzIxYjVjN2VkNzI5MmU3ODlhNjRjMDgxODgyMWM0YzY2ZDlhNjZkMjIyNWZiOSJ9XX0=",
+    "payloadType": "application/vnd.in-toto+json",
+    "signatures": [
+      {
+        "keyid": "",
+        "sig": ""
+      }
+    ]
+  },
+  "integrity": {
+    "digest": {
+      "sha256": "7e08a3df5c194ad56b66630523be6cc3583fdb66a9b4ef8c275fa7103f77b4bf"
+    },
+    "integrity_level": "hashed",
+    "signer_identity": null,
+    "signing": {
+      "detail": "hash-only: no signature was requested; the canonical content hash is the integrity guarantee.",
+      "effective_mode": "hash-only",
+      "requested_mode": "hash-only",
+      "signature": null,
+      "signed": false
+    },
+    "tool": {
+      "name": "finlexpurple",
+      "version": "0.4.0b1"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "content_hash": "sha256:5a934d48231dd65c3fa8427ad0bc539157030c300bb03b2db3acca60f0bbdefd",
+  "payload": {
+    "bundle_schema_version": 1,
+    "created_at": "2026-11-02T07:30:53.137665+00:00",
+    "finding": {
+      "agent": "cashier",
+      "body": null,
+      "discovered_at": "2026-11-02T07:30:45.615698Z",
+      "evidence_hash": "0cb9fbec63d8d3d9afcdc67e4659250b20888eb41a2b8eadfec89ccf59eeb2d0",
+      "expected_signal": "tampered value '0.01' reflected in the response body (server appears to accept a client-controlled 'amount' price)",
+      "finding_id": "31778bd32e719b5d5f27cef53f7f32d5fbf34149ca324dea845966e8339f55d9",
+      "headers": {},
+      "method": "POST",
+      "payload": "amount=0.01",
+      "response_snapshot": "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>Checkout \u2014 FinLexPurple Target</title>\n  <link rel=\"stylesheet\" href=\"/static/style.css\">\n</head>\n<body>\n  <div class=\"warnbar\">WARNING: DELIBERATELY VULNERABLE TEST TARGET \u2014 FinLexPurple 0.4.0 \u2014 localhost only, do not deploy</div>\n  <header class=\"topbar\">\n    <a class=\"brand\" href=\"/\">FLP Demo Shop <span class=\"fict\">(fictional)</span></a>\n    <nav>\n      <a href=\"/checkout\">Checkout</a>\n      <a href=\"/developers\">Developer / Integrations</a>\n    </nav>\n  </header>\n  <main class=\"wrap\">\n    \n<section class=\"panel narrow\">\n  <h2>Checkout</h2>\n  <dl class=\"kv\">\n    <dt>Order</dt><dd><a href=\"/orders/ord-1001\">ord-1001</a></dd>\n    <dt>Item</dt><dd>FLP Demo Pro plan (12 months)</dd>\n    <dt>List price</dt><dd>$49.99</dd>\n    <dt>Amount due</dt><dd id=\"amount-due\">$0.01</dd>\n  </dl>\n  \n    <p class=\"muted\">Amount saved: <strong>0.01</strong></p>\n  \n  <form method=\"post\" action=\"/checkout\">\n    <input type=\"hidden\" name=\"sku\" value=\"FLP-PRO-12M\">\n    <label>Amount (USD)\n      <input name=\"amount\" value=\"0.01\" readonly>\n    </label>\n    <button class=\"btn\" type=\"submit\">Place order</button>\n  </form>\n</section>\n\n  </main>\n  <footer class=\"foot\">\n    FLP Demo Shop is a fictional application built solely to test the\n    FinLexPurple&nbsp;0.4.0 security scanner. It contains intentional vulnerabilities.\n  </footer>\n</body>\n</html>",
+      "severity": "high",
+      "status": "verified",
+      "url": "http://127.0.0.1:5000/checkout",
+      "verification_log": "re-executed 'amount=0.01'; tampered price '0.01' confirmed charged/persisted server-side \u2014 exploit reproduced.",
+      "vulnerability_class": "price_tampering"
+    },
+    "replay_log": "re-executed 'amount=0.01'; tampered price '0.01' confirmed charged/persisted server-side \u2014 exploit reproduced."
+  },
+  "signing": {
+    "detail": "hash-only: no signature was requested; the canonical content hash is the integrity guarantee.",
+    "effective_mode": "hash-only",
+    "requested_mode": "hash-only",
+    "signature": null,
+    "signed": false
+  }
+}
