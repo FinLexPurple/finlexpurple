@@ -66,3 +66,19 @@ def get_or_create_install_id(path: Path | None = None) -> str:
     location.write_text(new_id + "\n", encoding="utf-8")
     ensure_owner_only(location)
     return new_id
+
+
+def reset_install_id(path: Path | None = None, marker_path: Path | None = None) -> str:
+    """Discard the stored install id (and ping marker) and generate a fresh one.
+
+    The install id is resettable by design (§22): deleting it severs any link to
+    prior pings, and clearing the one-time ping marker lets the new id ping once
+    if telemetry is on. Returns the newly generated id. No machine property is
+    ever read or incorporated in the replacement.
+    """
+
+    location = path or install_id_path()
+    marker = marker_path or install_ping_marker_path()
+    location.unlink(missing_ok=True)
+    marker.unlink(missing_ok=True)
+    return get_or_create_install_id(location)
