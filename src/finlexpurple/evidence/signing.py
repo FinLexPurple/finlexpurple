@@ -29,6 +29,8 @@ from finlexpurple.tools.registry import TOOL_REGISTRY
 
 # Signs the given content hash; returns (returncode, stdout, stderr) from cosign.
 SigningBackend = Callable[[str], tuple[int, str, str]]
+# Signs the given raw bytes (the v1 DSSE PAE); returns cosign's (returncode, stdout, stderr).
+BytesSigningBackend = Callable[[bytes], tuple[int, str, str]]
 
 _COSIGN_TIMEOUT_SECONDS = 120.0
 
@@ -186,4 +188,85 @@ def sign(
         signed=True,
         signature=signature,
         detail=f"signed with cosign ({mode.value}); signature is over the canonical content hash.",
+    )
+
+
+def _default_cosign_blob_backend(mode: SigningMode, managed_key: Path | None) -> BytesSigningBackend:
+    """Wrap ``cosign sign-blob`` over raw bytes (the v1 DSSE PAE), via the sandbox.
+
+    Mirrors :func:`_default_cosign_backend` but writes arbitrary bytes rather than
+    the content-hash string, so the signature is made over exactly the bytes the
+    verifier reconstructs. Raises ``FileNotFoundError`` when cosign is absent,
+    which :func:`sign_statement` turns into an honest hash-only result.
+    """
+
+    cosign = TOOL_REGISTRY["cosign"]
+
+    def backend(message: bytes) -> tuple[int, str, str]:
+        with tempfile.TemporaryDirectory(prefix="flp-cosign-") as tmp:
+            blob = Path(tmp) / "dsse-pae.bin"
+            blob.write_bytes(message)
+            argv: Sequence[str] = ["sign-blob", "--yes", str(blob)]
+            if mode is SigningMode.OFFLINE_MANAGED_KEY:
+                if managed_key is None:
+                    raise ValueError("offline-managed-key mode requires a key path.")
+                argv = ["sign-blob", "--key", str(managed_key), "--yes", str(blob)]
+            result = cosign.run(argv, timeout=_COSIGN_TIMEOUT_SECONDS, cwd=Path(tmp))
+            return (result.returncode if result.returncode is not None else -1, result.stdout, result.stderr)
+
+    return backend
+
+
+def sign_statement(
+    message: bytes,
+    *,
+    mode: SigningMode,
+    backend: BytesSigningBackend | None = None,
+    managed_key: Path | None = None,
+) -> SigningResult:
+    """Sign the raw ``message`` bytes (a v1 DSSE PAE) per ``mode``, degrading honestly.
+
+    The v1 counterpart of :func:`sign`: the signed object is the exact bytes, not
+    a re-serialized hash string. Hash-only mode returns immediately with no
+    signature; keyless/managed mode uses the ``backend`` (the real cosign blob
+    wrapper by default) and, if cosign is absent/errors/returns non-zero/empty,
+    degrades to an honest hash-only record saying why — never a fabricated or
+    silently-dropped signature.
+    """
+
+    if mode is SigningMode.HASH_ONLY:
+        return hash_only()
+
+    try:
+        run_backend = backend if backend is not None else _default_cosign_blob_backend(mode, managed_key)
+        returncode, stdout, stderr = run_backend(message)
+    except FileNotFoundError:
+        return _degraded(
+            mode,
+            f"{mode.value} signing was requested but cosign is not installed; "
+            "produced a hash-only bundle (nothing was signed).",
+        )
+    except (OSError, ValueError) as exc:
+        return _degraded(
+            mode, f"{mode.value} signing could not run ({exc}); produced a hash-only bundle."
+        )
+
+    if returncode != 0:
+        reason = stderr.strip() or stdout.strip() or f"cosign exited {returncode}"
+        return _degraded(
+            mode,
+            f"{mode.value} signing failed ({reason}); produced a hash-only bundle (nothing was signed).",
+        )
+
+    signature = stdout.strip()
+    if not signature:
+        return _degraded(
+            mode, f"{mode.value} signing returned no signature; produced a hash-only bundle."
+        )
+    return SigningResult(
+        requested_mode=mode,
+        effective_mode=mode,
+        signed=True,
+        signature=signature,
+        detail=f"signed with cosign ({mode.value}); signature is over the DSSE PAE of the bundle payload.",
     )
