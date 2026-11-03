@@ -9,3 +9,7 @@ src/finlexpurple/intel/baseline/pack.json text eol=lf
 # v0 recomputes a canonical hash). Force LF so a Windows checkout cannot rewrite
 # them to CRLF and break verification. Scoped to the golden files only.
 tests/finlexpurple/evidence/golden/*.bundle.json text eol=lf
+
+# The published report.json JSON Schema (Unit 1.3) is a frozen public contract
+# loaded verbatim in CI. Keep it LF on every platform for stable cross-OS reads.
+src/finlexpurple/reporting/report.schema.json text eol=lf
