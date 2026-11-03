@@ -54,7 +54,9 @@ def test_on_sends_install_ping_once_then_off_sends_nothing(tmp_path, monkeypatch
     assert len(captured) == 1
     url, payload = captured[0]
     assert url == DEFAULT_TELEMETRY_ENDPOINT
-    assert payload["event"] == "install" and set(payload) == {"event", "install_id"}  # minimal
+    # The envelope: event + install_id stay top-level (counter back-compat), no props.
+    assert payload["event"] == "install" and payload["props"] == {}
+    assert payload["schema_version"] == 1 and "install_id" in payload
 
     # A second `on` does not ping again (at most once per install).
     second = runner.invoke(app, ["telemetry", "on"])
