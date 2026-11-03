@@ -36,6 +36,7 @@ def _finding(name: str, ecosystem: str, *, message: str, mode: ScanMode, confide
         vulnerability_class="hallucinated_dependency",
         method="SCA",
         url=f"pkg:{ecosystem}/{name}",
+        purl=f"pkg:{ecosystem}/{name}",
         payload=f"{ecosystem}:{name}",
         response_snapshot=labeled_snapshot(
             {"package": name, "ecosystem": ecosystem, "check": "slopsquat"},

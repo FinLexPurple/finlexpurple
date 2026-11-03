@@ -18,6 +18,7 @@ def test_online_oracle_flags_a_nonexistent_package_high_confidence() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.vulnerability_class == "hallucinated_dependency"
+    assert f.purl == "pkg:PyPI/reqeusts-helper"  # Unit 1.3: a real package coordinate
     assert "mode=online" in f.expected_signal
     assert "confidence=high" in f.expected_signal
 
