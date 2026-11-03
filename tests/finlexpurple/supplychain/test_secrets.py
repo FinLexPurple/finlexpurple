@@ -15,6 +15,8 @@ def test_detects_aws_key_but_redacts_it() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.vulnerability_class == "exposed_secret"
+    # Unit 1.3: a real, relative file anchor (never invented).
+    assert f.source_file == "config.py" and f.source_line == 1
     # The raw secret must never appear in the finding anywhere.
     assert _AWS not in (f.response_snapshot or "")
     assert _AWS not in f.expected_signal

@@ -72,6 +72,9 @@ def scan_text(text: str, *, location: str) -> list[Finding]:
                         # Redacted preview only — the raw secret is never stored.
                         response_snapshot=f"{pattern.name} at {where}: {_redact(match.group(0))}",
                         expected_signal=f"possible {pattern.name} committed at {where}",
+                        # Real file anchor (Unit 1.3): the structured location.
+                        source_file=location,
+                        source_line=line_no,
                         severity=pattern.severity,
                     )
                 )
