@@ -13,11 +13,15 @@ import pytest
 from pydantic import ValidationError
 
 from finlexpurple.detectors.schema import (
+    FINDING_ID_PREFIX,
+    FINGERPRINT_PREFIX,
     Finding,
     FindingStatus,
     Severity,
     compute_evidence_hash,
     compute_finding_id,
+    compute_fingerprint,
+    finding_id_slug,
 )
 
 
@@ -56,6 +60,68 @@ def test_finding_id_ignores_method_case_and_url_whitespace() -> None:
     assert compute_finding_id("get", " https://x.invalid/a ", "p") == compute_finding_id(
         "GET", "https://x.invalid/a", "p"
     )
+
+
+# --- Unit 1.2: versioned ids, normalization, and the host-independent fingerprint
+
+
+def test_finding_id_is_versioned_and_algorithm_tagged() -> None:
+    """The id carries the freeze prefix so a future v2 scheme can coexist."""
+
+    fid = compute_finding_id("GET", "https://x.invalid/a", "p")
+    assert fid.startswith(FINDING_ID_PREFIX)
+    assert len(fid.removeprefix(FINDING_ID_PREFIX)) == 64  # sha256 hex
+
+
+def test_finding_id_normalizes_host_case_default_port_and_query_order() -> None:
+    """Lowercase host, stripped default port, and sorted query keys are one id."""
+
+    a = compute_finding_id("GET", "https://Example.INVALID:443/a?b=2&a=1", "p")
+    b = compute_finding_id("GET", "https://example.invalid/a?a=1&b=2", "p")
+    assert a == b
+
+
+def test_finding_id_route_templates_concrete_ids() -> None:
+    """Rotating concrete resource ids collapse to the same route (same finding)."""
+
+    assert compute_finding_id("GET", "https://x.invalid/orders/123", "p") == compute_finding_id(
+        "GET", "https://x.invalid/orders/456", "p"
+    )
+
+
+def test_finding_id_keeps_host_distinct() -> None:
+    """The finding id is the exact per-target instance: different host, different id."""
+
+    assert compute_finding_id("GET", "https://staging.invalid/a", "p") != compute_finding_id(
+        "GET", "https://prod.invalid/a", "p"
+    )
+
+
+def test_fingerprint_matches_across_hosts_but_finding_id_does_not() -> None:
+    """Same flaw on staging and prod shares a fingerprint, not a finding_id."""
+
+    staging = Finding.new(vulnerability_class="idor", method="GET",
+                          url="https://staging.invalid/orders/1", payload="id=1")
+    prod = Finding.new(vulnerability_class="idor", method="GET",
+                       url="https://prod.invalid/orders/9", payload="id=9")
+    assert staging.fingerprint.startswith(FINGERPRINT_PREFIX)
+    assert staging.fingerprint == prod.fingerprint  # host-independent
+    assert staging.finding_id != prod.finding_id  # exact per-target instance
+
+
+def test_fingerprint_distinguishes_vulnerability_class() -> None:
+    """A different rule on the same route is a different fingerprint."""
+
+    a = compute_fingerprint("sqli", "https://x.invalid/a", "q=1")
+    b = compute_fingerprint("xss", "https://x.invalid/a", "q=1")
+    assert a != b
+
+
+def test_finding_id_slug_is_filesystem_safe() -> None:
+    """The on-disk slug drops the colons that are illegal in Windows filenames."""
+
+    slug = finding_id_slug("flp1:sha256:" + "a" * 64)
+    assert ":" not in slug and slug == "flp1_sha256_" + "a" * 64
 
 
 def test_new_finding_is_always_reported() -> None:

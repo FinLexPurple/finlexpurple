@@ -24,9 +24,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -66,16 +68,130 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def compute_finding_id(method: str, url: str, payload: str) -> str:
-    """Deterministically derive a finding id from method+url+payload.
+# Versioned, algorithm-tagged id prefixes (Unit 1.2 freeze). The version +
+# algorithm prefix is the freeze line: a future v2 scheme ("flp2:...") coexists
+# with these, and 0.3.0's pre-freeze bare-hex ids are simply a different, older
+# shape. ``evidence_hash`` still binds the exact captured bytes.
+FINDING_ID_PREFIX = "flp1:sha256:"
+FINGERPRINT_PREFIX = "flpfp1:sha256:"
 
-    Uses a newline-delimited canonical form so the three parts cannot run
-    together ambiguously, then SHA-256. Identical inputs always yield an
-    identical id; the id deliberately excludes the timestamp and response so
-    that re-detecting the same issue is recognized as the same finding.
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+_UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.IGNORECASE)
+# Query/param names whose VALUES are volatile per request and so are dropped
+# from the identity (they would otherwise make the "same" finding look new).
+_VOLATILE_PARAMS = frozenset(
+    {"csrf", "csrftoken", "csrf_token", "_csrf", "token", "nonce", "_", "ts",
+     "timestamp", "time", "sid", "session", "sessionid", "session_id"}
+)
+
+
+def _route_template(path: str) -> str:
+    """Collapse concrete resource ids in a URL path to ``{id}`` placeholders.
+
+    Numeric segments and UUIDs become ``{id}`` so ``/orders/123`` and
+    ``/orders/456`` are recognized as the same route (the same finding across
+    runs even as concrete ids rotate). Conservative on purpose: non-numeric,
+    non-UUID words like ``v2`` or ``checkout`` are left untouched.
     """
 
-    return _sha256("\n".join([method.upper().strip(), url.strip(), payload]))
+    out: list[str] = []
+    for segment in path.split("/"):
+        if segment and (segment.isdigit() or _UUID_RE.match(segment)):
+            out.append("{id}")
+        else:
+            out.append(segment)
+    return "/".join(out)
+
+
+def _normalized_query(query: str) -> str:
+    """Sort query keys and drop volatile ones; keep stable key=value pairs."""
+
+    pairs = [
+        (key, value)
+        for key, value in parse_qsl(query, keep_blank_values=True)
+        if key.lower() not in _VOLATILE_PARAMS
+    ]
+    return urlencode(sorted(pairs))
+
+
+def _normalize_url_for_id(url: str) -> str:
+    """Normalize a URL for identity: lowercase scheme+host, strip default ports,
+    route-template the path, sort query keys, drop volatile params.
+    """
+
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    netloc = host
+    port = parts.port
+    if port is not None and _DEFAULT_PORTS.get(scheme) != port:
+        netloc = f"{host}:{port}"
+    path = _route_template(parts.path)
+    return f"{scheme}://{netloc}{path}?{_normalized_query(parts.query)}"
+
+
+def _param_names(url: str, payload: str) -> list[str]:
+    """Sorted, de-duplicated parameter names from the URL query and the payload.
+
+    Used only for the host-independent fingerprint. Payloads are commonly
+    ``name=value``; the name is taken when present, ignoring volatile params.
+    """
+
+    names = {key for key, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True)}
+    for pair in payload.split("&"):
+        if "=" in pair:
+            names.add(pair.split("=", 1)[0])
+    return sorted(n for n in names if n and n.lower() not in _VOLATILE_PARAMS)
+
+
+def compute_finding_id(method: str, url: str, payload: str) -> str:
+    """Deterministically derive the versioned finding id from method+url+payload.
+
+    Returns ``flp1:sha256:<hex>``. The url is normalized (lowercase scheme+host,
+    default ports stripped, path route-templated, query keys sorted, volatile
+    params dropped) so re-detecting the same issue yields the same id even as
+    concrete resource ids or request nonces rotate. The host is kept, so this is
+    the exact per-target instance id; the timestamp and response are excluded.
+    """
+
+    canonical = "\n".join([method.upper().strip(), _normalize_url_for_id(url), payload])
+    return f"{FINDING_ID_PREFIX}{_sha256(canonical)}"
+
+
+def compute_fingerprint(
+    vulnerability_class: str, url: str, payload: str, *, scope: str = ""
+) -> str:
+    """Derive the host-independent fingerprint ``flpfp1:sha256:<hex>``.
+
+    Combines the rule key (``vulnerability_class`` today; Unit 1.3 formalizes a
+    rule_id catalog that maps to it), the route template, the sorted parameter
+    names, and an optional target-scope label (e.g. staging vs prod) — but
+    **excludes the host**. So the same flaw on staging and prod shares a
+    fingerprint while keeping distinct per-host ``finding_id`` values.
+    """
+
+    parts = urlsplit(url.strip())
+    canonical = "\n".join(
+        [
+            vulnerability_class.strip(),
+            _route_template(parts.path),
+            ",".join(_param_names(url, payload)),
+            scope.strip(),
+        ]
+    )
+    return f"{FINGERPRINT_PREFIX}{_sha256(canonical)}"
+
+
+def finding_id_slug(finding_id: str) -> str:
+    """A filesystem-safe form of a finding id, for evidence/replay/bundle names.
+
+    The id value (``flp1:sha256:<hex>``) contains colons, which are illegal in
+    Windows filenames, so on-disk names replace every non ``[A-Za-z0-9._-]``
+    character with ``_``. The id itself is unchanged in ``report.json`` and the
+    bundle, so value-based lookups (feedback) still match.
+    """
+
+    return re.sub(r"[^A-Za-z0-9._-]", "_", finding_id)
 
 
 def compute_evidence_hash(
@@ -120,6 +236,10 @@ class Finding(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     finding_id: str
+    # Host-independent matcher (Unit 1.2): the same flaw across staging/prod/runs
+    # shares this, while ``finding_id`` stays the exact per-target instance id.
+    # Defaulted so a finding dict from before the freeze still deserializes.
+    fingerprint: str = ""
     vulnerability_class: str
     method: str
     url: str
@@ -166,6 +286,7 @@ class Finding(BaseModel):
         resolved_headers = dict(headers or {})
         return cls(
             finding_id=compute_finding_id(method, url, payload),
+            fingerprint=compute_fingerprint(vulnerability_class, url, payload),
             vulnerability_class=vulnerability_class,
             method=method.upper().strip(),
             url=url.strip(),
