@@ -25,6 +25,7 @@ _TRIVY_JSON = json.dumps(
                         "FixedVersion": "1.1.1k",
                         "Severity": "CRITICAL",
                         "Title": "openssl: SM2 Decryption Buffer Overflow",
+                        "PkgIdentifier": {"PURL": "pkg:deb/debian/openssl@1.1.1d"},
                     }
                 ],
             },
@@ -39,6 +40,7 @@ def test_parse_normalizes_and_maps_severity() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.vulnerability_class == "container_image_vuln"
+    assert f.purl == "pkg:deb/debian/openssl@1.1.1d"  # Unit 1.3: trivy's own purl
     assert f.severity is Severity.CRITICAL
     assert "CVE-2021-3711" in f.expected_signal
 

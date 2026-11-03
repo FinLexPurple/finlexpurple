@@ -65,11 +65,14 @@ def parse_trivy_output(raw: str, *, agent: str = "container") -> list[Finding]:
             vuln_id = str(vuln.get("VulnerabilityID", "UNKNOWN"))
             pkg = str(vuln.get("PkgName", ""))
             version = str(vuln.get("InstalledVersion", ""))
+            # trivy supplies a real purl under PkgIdentifier in recent schemas.
+            pkg_identifier = vuln.get("PkgIdentifier") if isinstance(vuln.get("PkgIdentifier"), dict) else {}
             findings.append(
                 Finding.new(
                     vulnerability_class="container_image_vuln",
                     method="IMAGE",
                     url=f"image:{pkg}@{version}" if pkg else target,
+                    purl=str(pkg_identifier.get("PURL")) or None if pkg_identifier else None,
                     payload=f"{pkg}@{version}:{vuln_id}",
                     response_snapshot=json.dumps(vuln, sort_keys=True)[:_MAX_SNAPSHOT],
                     expected_signal=f"{vuln_id}: {vuln.get('Title') or vuln.get('Description', '')}".strip(),
