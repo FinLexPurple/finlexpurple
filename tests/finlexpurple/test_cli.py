@@ -576,3 +576,95 @@ def test_resume_rejects_traversal_run_id(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["resume", "../escape"])
     assert result.exit_code == 2
     assert "Invalid run id" in strip_ansi(result.output)
+
+
+def test_reserved_push_command_is_not_available() -> None:
+    result = runner.invoke(app, ["push"])
+    assert result.exit_code == 2
+    assert "reserved" in strip_ansi(result.output).lower()
+
+
+def test_reserved_auth_command_is_not_available() -> None:
+    result = runner.invoke(app, ["auth"])
+    assert result.exit_code == 2
+    assert "reserved" in strip_ansi(result.output).lower()
+
+
+def test_scan_rejects_unknown_format_value(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["scan", "--target", "https://x.invalid", "--format", "pdf"])
+    assert result.exit_code == 2
+    assert "--format" in strip_ansi(result.output)
+
+
+def test_scan_rejects_unknown_fail_on_value(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["scan", "--target", "https://x.invalid", "--fail-on", "warnings"])
+    assert result.exit_code == 2
+    assert "--fail-on" in strip_ansi(result.output)
+
+
+def test_help_lists_the_frozen_commands_including_reserved() -> None:
+    output = strip_ansi(runner.invoke(app, ["--help"]).output)
+    for command in ("scan", "verify-bundle", "setup", "init", "resume", "telemetry",
+                    "feedback", "agents", "run", "push", "auth"):
+        assert command in output
+
+
+def test_scan_fail_on_verified_exits_three_end_to_end(tmp_path, monkeypatch) -> None:
+    """--fail-on verified returns the documented exit code 3 on a verified finding."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from urllib.parse import parse_qs, urlsplit
+
+    class _Handler(BaseHTTPRequestHandler):
+        persisted = "49.99"
+
+        def log_message(self, *a: object) -> None:
+            return
+
+        def do_GET(self) -> None:
+            query = {k: v[0] for k, v in parse_qs(urlsplit(self.path).query).items()}
+            cls = type(self)
+            if "price" in query:
+                try:
+                    float(query["price"])
+                    cls.persisted = query["price"]
+                except ValueError:
+                    pass
+            body = f"order total={cls.persisted}".encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://{server.server_address[0]}:{server.server_address[1]}"
+
+    def _recon(*args: object, **kwargs: object):
+        catalog = EndpointCatalog()
+        catalog.add("GET", f"{base}/checkout", parameters={"price"})
+        return SimpleNamespace(
+            catalog=catalog, fingerprint=Fingerprint(server=None, technologies=()),
+            disallow_paths=(), warnings=(),
+        )
+
+    monkeypatch.setattr(
+        "finlexpurple.cli.confirm_scope", lambda target, **kw: SimpleNamespace(first_confirmed_at=None)
+    )
+    monkeypatch.setattr("finlexpurple.cli.run_recon", _recon)
+    monkeypatch.setenv("REQUIRE_HUMAN_APPROVAL", "false")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.chdir(tmp_path)
+
+    try:
+        result = runner.invoke(app, ["scan", "--target", base, "--fail-on", "verified"], input="y\n")
+        output = strip_ansi(result.output)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert result.exit_code == 3, output
+    assert "1 verified" in output, output
+    assert "--fail-on verified" in output, output

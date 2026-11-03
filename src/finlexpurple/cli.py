@@ -75,6 +75,14 @@ app = typer.Typer(help="Autonomous security testing agent.", invoke_without_comm
 telemetry_app = typer.Typer(help="Manage optional telemetry.", no_args_is_help=True)
 agents_app = typer.Typer(help="List and inspect the named security agents.", no_args_is_help=True)
 
+# Frozen exit-code contract (Unit 1.4; see CONTRACTS.md):
+#   0 = clean · 1 = tool/runtime error · 2 = usage/argument error ·
+#   3 = --fail-on threshold matched (e.g. a VERIFIED finding).
+_EXIT_VERIFIED_THRESHOLD = 3
+# Reserved --format values now (sarif/cyclonedx/spdx arrive in Phase 3).
+_REPORT_FORMATS = ("json", "md")
+_FAIL_ON_CHOICES = ("none", "verified")
+
 
 @app.callback(invoke_without_command=True)
 def root_callback(
@@ -166,24 +174,40 @@ class _SafetySettings:
     warning: str | None = None
 
 
-def _recover_bool_env(name: str, *, default: bool) -> bool:
+def _first_env(*names: str) -> tuple[str, str] | None:
+    """Return (name, value) of the first set, non-empty env var among ``names``.
+
+    Names are tried in order — the canonical ``FLP_``-prefixed name first, then its
+    pre-0.4.0 back-compat alias — so the env-var freeze (Unit 1.4) honours both.
+    """
+
+    for name in names:
+        raw = os.environ.get(name)
+        if raw is not None and raw.strip() != "":
+            return name, raw
+    return None
+
+
+def _recover_bool_env(*names: str, default: bool) -> bool:
     """Parse a boolean safety env var with Config's own validator; a bad value errors clearly."""
 
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
+    found = _first_env(*names)
+    if found is None:
         return default
+    name, raw = found
     try:
         return bool(Config.validate_boolean(raw))
     except ValueError as exc:
         raise ConfigurationError(f"{name}: {exc}") from None
 
 
-def _recover_spend_env(name: str) -> float:
-    """Parse MAX_SPEND_USD with Config's own validator; a bad value errors clearly."""
+def _recover_spend_env(*names: str) -> float:
+    """Parse the spend cap with Config's own validator; a bad value errors clearly."""
 
-    raw = os.environ.get(name)
-    if raw is None or raw.strip() == "":
+    found = _first_env(*names)
+    if found is None:
         return 5.0
+    name, raw = found
     try:
         return float(Config.validate_max_spend(raw))
     except ValueError as exc:
@@ -205,8 +229,10 @@ def _load_safety_settings() -> _SafetySettings:
     try:
         config = Config.load()
     except (ConfigurationError, ValueError, OSError) as exc:
-        require_human_approval = _recover_bool_env("REQUIRE_HUMAN_APPROVAL", default=True)
-        max_spend_usd = _recover_spend_env("MAX_SPEND_USD")
+        require_human_approval = _recover_bool_env(
+            "FLP_REQUIRE_HUMAN_APPROVAL", "REQUIRE_HUMAN_APPROVAL", default=True
+        )
+        max_spend_usd = _recover_spend_env("FLP_MAX_SPEND_USD", "MAX_SPEND_USD")
         warning = (
             f"Warning: configuration not fully loaded ({exc}). The model provider is "
             "unconfigured, so planning runs deterministically (no model call). Safety settings "
@@ -228,6 +254,9 @@ def _orchestrate_and_report(
     detect_origin: str | None = None,
     order_status_url: str | None = None,
     llm_plan: bool = False,
+    report_formats: tuple[str, ...] | None = None,
+    output: Path | None = None,
+    fail_on: str = "none",
 ) -> None:
     """Record the authorization attestation + fix mode, then drive the engine under a kill switch.
 
@@ -273,7 +302,7 @@ def _orchestrate_and_report(
     # constructed, wrapped in a MeteredProvider so every call is charged against the
     # cap (no un-metered path to a paid API), and handed to the planner.
     provider = None
-    if llm_plan and settings.config is not None and os.environ.get("LLM_PROVIDER"):
+    if llm_plan and settings.config is not None and _first_env("FLP_LLM_PROVIDER", "LLM_PROVIDER"):
         try:
             provider = create_provider(settings.config)
         except (ConfigurationError, ValueError, OSError) as exc:
@@ -409,7 +438,11 @@ def _orchestrate_and_report(
         )
         return
     paths = write_report(
-        collected, target=state.canonical_target, out_dir=state_path.parent, run_id=state.run_id
+        collected,
+        target=state.canonical_target,
+        out_dir=output or state_path.parent,
+        run_id=state.run_id,
+        formats=report_formats,
     )
     audit.record("report_written", findings=len(collected))
     verified = sum(1 for f in collected if f.status is FindingStatus.VERIFIED)
@@ -417,8 +450,39 @@ def _orchestrate_and_report(
         f"Scan complete: {len(collected)} findings ({verified} verified) "
         f"across {final_state.counters['tool_calls']} detector calls."
     )
-    typer.echo(f"Report: {paths.report_md}")
-    typer.echo(f"        {paths.report_json}")
+    wanted = set(report_formats) if report_formats else {"json", "md"}
+    if "md" in wanted:
+        typer.echo(f"Report: {paths.report_md}")
+    if "json" in wanted:
+        typer.echo(f"        {paths.report_json}")
+    # --fail-on verified (Unit 1.4): a distinct exit code when a verified finding
+    # meets the threshold, so CI can gate on independently-reproduced findings.
+    if fail_on == "verified" and verified > 0:
+        typer.echo(
+            f"Exiting {_EXIT_VERIFIED_THRESHOLD}: {verified} verified finding(s) met --fail-on verified.",
+            err=True,
+        )
+        raise typer.Exit(code=_EXIT_VERIFIED_THRESHOLD)
+
+
+@app.command()
+def push() -> None:
+    """Reserved: publish results to a FinLexPurple backend (not yet available)."""
+
+    typer.echo(
+        "The 'push' command is reserved and not available in this release.", err=True
+    )
+    raise typer.Exit(code=2)
+
+
+@app.command()
+def auth() -> None:
+    """Reserved: authenticate to a FinLexPurple backend (not yet available)."""
+
+    typer.echo(
+        "The 'auth' command is reserved and not available in this release.", err=True
+    )
+    raise typer.Exit(code=2)
 
 
 @app.command()
@@ -581,6 +645,22 @@ def scan(
         str | None,
         typer.Option("--fix-mode", help="'agent' or 'human' (default human); recorded for the fix stage (Phase 15)."),
     ] = None,
+    report_format: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--format",
+            help="Report format(s) to write: 'json' and/or 'md' (default both). "
+            "sarif/cyclonedx/spdx are reserved for a later release.",
+        ),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", help="Directory to write the report into (default: the run directory)."),
+    ] = None,
+    fail_on: Annotated[
+        str,
+        typer.Option("--fail-on", help="Exit 3 when the threshold is met: 'none' (default) or 'verified'."),
+    ] = "none",
 ) -> None:
     """Confirm scope, map endpoints, and run the bounded orchestration loop.
 
@@ -601,6 +681,14 @@ def scan(
         raise typer.Exit(code=2)
     if resume is None and target is None:
         typer.echo("--target is required unless --resume is supplied.", err=True)
+        raise typer.Exit(code=2)
+    # Validate the frozen value sets for --format and --fail-on (Unit 1.4).
+    formats = tuple(dict.fromkeys(report_format)) if report_format else None
+    if formats is not None and any(fmt not in _REPORT_FORMATS for fmt in formats):
+        typer.echo(f"--format must be one or more of {list(_REPORT_FORMATS)}.", err=True)
+        raise typer.Exit(code=2)
+    if fail_on not in _FAIL_ON_CHOICES:
+        typer.echo(f"--fail-on must be one of {list(_FAIL_ON_CHOICES)}.", err=True)
         raise typer.Exit(code=2)
     state = None
     state_path: Path
@@ -674,6 +762,9 @@ def scan(
         detect_origin=_detection_origin(root_url) if root_url else None,
         order_status_url=order_status_url,
         llm_plan=llm_plan,
+        report_formats=formats,
+        output=output,
+        fail_on=fail_on,
     )
 
 
@@ -717,6 +808,13 @@ def off() -> None:
     """Opt out of telemetry (writes TELEMETRY_ENABLED=false to ./.env)."""
 
     typer.echo(telemetry_cli.disable_telemetry(Path.cwd() / ".env"))
+
+
+@telemetry_app.command()
+def reset() -> None:
+    """Reset the local random install id (and its one-time ping marker)."""
+
+    typer.echo(telemetry_cli.reset_install_id_text())
 
 
 @app.command()

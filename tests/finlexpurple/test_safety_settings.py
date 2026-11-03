@@ -16,11 +16,18 @@ from finlexpurple.config import ConfigurationError
 # Every config var Config.load reads, cleared so these tests are isolated from any
 # env another test leaked (e.g. a stray FALLBACK_LLM_PROVIDER/MODEL_TIER that would
 # otherwise make even a plain ollama load fail).
-_ALL_CONFIG_KEYS = (
+_BARE_CONFIG_KEYS = (
     "LLM_PROVIDER", "OLLAMA_MODEL", "OLLAMA_HOST", "ANTHROPIC_MODEL", "OPENAI_MODEL",
     "OPENROUTER_MODEL", "GEMINI_MODEL", "FALLBACK_LLM_PROVIDER", "ANTHROPIC_API_KEY",
     "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY", "REQUIRE_HUMAN_APPROVAL",
     "TELEMETRY_ENABLED", "TELEMETRY_ENDPOINT", "MODEL_TIER", "MAX_SPEND_USD",
+)
+# Config also reads the canonical FLP_-prefixed names (Unit 1.4); clear both the
+# bare and FLP_ forms so a .env another test loaded (python-dotenv writes into
+# os.environ) cannot leak a provider/spend override into these tests.
+_ALL_CONFIG_KEYS = (
+    *_BARE_CONFIG_KEYS,
+    *(f"FLP_{name}" for name in _BARE_CONFIG_KEYS if not name.endswith("_API_KEY")),
 )
 
 

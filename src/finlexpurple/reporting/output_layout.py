@@ -83,6 +83,7 @@ def write_report(
     explainer: Explainer | None = None,
     now: datetime | None = None,
     run_id: str | None = None,
+    formats: tuple[str, ...] | None = None,
 ) -> ReportPaths:
     """Write the full report tree for ``findings`` and return its paths.
 
@@ -161,23 +162,27 @@ def write_report(
     report_json = directory / "report.json"
     report_md = directory / "report.md"
     resolved_run_id = run_id or directory.name
-    _write_owner_only(
-        report_json,
-        render_json(
-            target=target,
-            run_id=resolved_run_id,
-            started_at=_started_at(resolved_run_id, stamp).isoformat(),
-            generated_at=stamp.isoformat(),
-            summary=summary,
-            findings=findings,
-        ),
-    )
-    _write_owner_only(
-        report_md,
-        render_markdown(
-            target=target, generated_at=stamp.isoformat(), summary=summary, rendered=rendered
-        ),
-    )
+    # --format freeze (Unit 1.4): default writes both; a subset writes only those.
+    wanted = set(formats) if formats else {"json", "md"}
+    if "json" in wanted:
+        _write_owner_only(
+            report_json,
+            render_json(
+                target=target,
+                run_id=resolved_run_id,
+                started_at=_started_at(resolved_run_id, stamp).isoformat(),
+                generated_at=stamp.isoformat(),
+                summary=summary,
+                findings=findings,
+            ),
+        )
+    if "md" in wanted:
+        _write_owner_only(
+            report_md,
+            render_markdown(
+                target=target, generated_at=stamp.isoformat(), summary=summary, rendered=rendered
+            ),
+        )
     return ReportPaths(
         directory=directory,
         report_json=report_json,
