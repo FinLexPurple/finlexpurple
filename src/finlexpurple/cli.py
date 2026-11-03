@@ -408,7 +408,9 @@ def _orchestrate_and_report(
             f"{final_state.counters['tool_calls']} detector calls; no web detectors ran."
         )
         return
-    paths = write_report(collected, target=state.canonical_target, out_dir=state_path.parent)
+    paths = write_report(
+        collected, target=state.canonical_target, out_dir=state_path.parent, run_id=state.run_id
+    )
     audit.record("report_written", findings=len(collected))
     verified = sum(1 for f in collected if f.status is FindingStatus.VERIFIED)
     typer.echo(
