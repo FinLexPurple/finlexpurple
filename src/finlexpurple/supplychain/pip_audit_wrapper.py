@@ -67,6 +67,7 @@ def parse_pip_audit_output(raw: str, *, agent: str = "supplychain") -> list[Find
                     vulnerability_class="vulnerable_dependency",
                     method="SCA",
                     url=f"pkg:pypi/{name}@{version}",
+                    purl=f"pkg:pypi/{name}@{version}",
                     payload=f"{name}@{version}:{vuln_id}",
                     response_snapshot=json.dumps(vuln, sort_keys=True)[:_MAX_SNAPSHOT],
                     expected_signal=(

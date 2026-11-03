@@ -44,6 +44,7 @@ def test_parse_wrapped_shape() -> None:
     findings = parse_pip_audit_output(_WRAPPED)
     assert len(findings) == 1
     assert findings[0].vulnerability_class == "vulnerable_dependency"
+    assert findings[0].purl and findings[0].purl.startswith("pkg:pypi/")  # Unit 1.3
     assert "PYSEC-2019-179" in findings[0].expected_signal
     assert "fixed in 0.12.3" in findings[0].expected_signal
     # pip-audit gives no severity; we default MEDIUM and never guess upward.
