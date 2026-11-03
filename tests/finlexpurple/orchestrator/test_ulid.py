@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from finlexpurple.orchestrator.ulid import new_ulid
+from finlexpurple.orchestrator.ulid import new_ulid, ulid_timestamp_ms
 
 _CROCKFORD = set("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
 
@@ -45,3 +45,15 @@ def test_ulid_rejects_bad_inputs() -> None:
         new_ulid(now_ms=1 << 48)  # out of the 48-bit range
     with pytest.raises(ValueError):
         new_ulid(randomness=b"\x00" * 9)  # must be exactly 10 bytes
+
+
+def test_ulid_timestamp_round_trips() -> None:
+    now = 1_700_000_000_000
+    assert ulid_timestamp_ms(new_ulid(now_ms=now)) == now  # decode recovers the mint time
+
+
+def test_ulid_timestamp_rejects_malformed() -> None:
+    with pytest.raises(ValueError):
+        ulid_timestamp_ms("too-short")
+    with pytest.raises(ValueError):
+        ulid_timestamp_ms("I" * 26)  # 'I' is not in the Crockford alphabet
