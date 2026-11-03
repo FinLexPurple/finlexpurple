@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.detectors.schema import Finding, FindingStatus, finding_id_slug
 from finlexpurple.evidence.bundle import BUNDLE_FORMAT_V1, bundle_content_hash
 from finlexpurple.reporting.output_layout import write_report
 
@@ -37,10 +37,13 @@ def test_layout_matches_user_guide_section_9(tmp_path: Path) -> None:
 def test_verified_finding_gets_bundle_referenced_in_markdown(tmp_path: Path) -> None:
     f = _verified()
     paths = write_report([f], target="t", out_root=tmp_path, now=_NOW)
-    bundle = paths.evidence_dir / f"{f.finding_id}.bundle.json"
+    # On-disk artifacts use a filesystem-safe slug (the id value carries colons).
+    slug = finding_id_slug(f.finding_id)
+    assert ":" not in slug
+    bundle = paths.evidence_dir / f"{slug}.bundle.json"
     assert bundle.is_file()
     md = paths.report_md.read_text()
-    assert f"evidence/{f.finding_id}.bundle.json" in md
+    assert f"evidence/{slug}.bundle.json" in md
     # the produced bundle is the v1 DSSE/in-toto format, and its integrity hash
     # is referenced in the markdown.
     produced = json.loads(bundle.read_text())
@@ -51,9 +54,10 @@ def test_verified_finding_gets_bundle_referenced_in_markdown(tmp_path: Path) -> 
 def test_evidence_and_replay_files_written(tmp_path: Path) -> None:
     f = _verified()
     paths = write_report([f], target="t", out_root=tmp_path, now=_NOW)
-    ev = json.loads((paths.evidence_dir / f"{f.finding_id}.json").read_text())
+    slug = finding_id_slug(f.finding_id)
+    ev = json.loads((paths.evidence_dir / f"{slug}.json").read_text())
     assert ev["url"] == "http://t/s" and ev["response_snapshot"] == "error in your SQL syntax"
-    assert (paths.replay_logs_dir / f"{f.finding_id}.log").read_text() == "re-executed; SQL error reproduced."
+    assert (paths.replay_logs_dir / f"{slug}.log").read_text() == "re-executed; SQL error reproduced."
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX file-mode semantics")

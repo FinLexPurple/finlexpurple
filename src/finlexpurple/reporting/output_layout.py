@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.detectors.schema import Finding, FindingStatus, finding_id_slug
 from finlexpurple.evidence.bundle import build_bundle_v1, bundle_content_hash, dumps_bundle
 from finlexpurple.reporting.aggregate import summarize
 from finlexpurple.reporting.badge import badge_for
@@ -90,10 +90,13 @@ def write_report(
 
     rendered: list[RenderedFinding] = []
     for finding in findings:
-        fid = finding.finding_id
-        evidence_name = f"evidence/{fid}.json"
+        # The finding id value (flp1:sha256:...) carries colons, illegal in
+        # Windows filenames, so on-disk artifacts use a filesystem-safe slug;
+        # the id itself is unchanged in report.json.
+        slug = finding_id_slug(finding.finding_id)
+        evidence_name = f"evidence/{slug}.json"
         _write_owner_only(
-            evidence_dir / f"{fid}.json",
+            evidence_dir / f"{slug}.json",
             json.dumps(
                 {
                     "method": finding.method,
@@ -109,16 +112,16 @@ def write_report(
                 sort_keys=True,
             ),
         )
-        replay_name = f"replay-logs/{fid}.log"
-        _write_owner_only(replay_logs_dir / f"{fid}.log", finding.verification_log or "")
+        replay_name = f"replay-logs/{slug}.log"
+        _write_owner_only(replay_logs_dir / f"{slug}.log", finding.verification_log or "")
 
         bundle_name: str | None = None
         bundle_hash: str | None = None
         if finding.status is FindingStatus.VERIFIED:
             bundle = build_bundle_v1(finding)
-            bundle_name = f"evidence/{fid}.bundle.json"
+            bundle_name = f"evidence/{slug}.bundle.json"
             bundle_hash = bundle_content_hash(bundle)
-            _write_owner_only(evidence_dir / f"{fid}.bundle.json", dumps_bundle(bundle))
+            _write_owner_only(evidence_dir / f"{slug}.bundle.json", dumps_bundle(bundle))
 
         rendered.append(
             RenderedFinding(

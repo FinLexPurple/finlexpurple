@@ -8,7 +8,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.detectors.schema import Finding, FindingStatus, finding_id_slug
 from finlexpurple.reporting.aggregate import summarize
 from finlexpurple.reporting.narrative import Explanation
 from finlexpurple.reporting.output_layout import write_report
@@ -70,9 +70,11 @@ def test_item4_layout_and_bundle_reference_for_verified(tmp_path: Path) -> None:
     # Section 9 layout:
     assert paths.report_json.is_file() and paths.report_md.is_file()
     assert paths.evidence_dir.is_dir() and paths.replay_logs_dir.is_dir()
-    # report.md references the signed evidence bundle for the verified finding:
+    # report.md references the signed evidence bundle for the verified finding
+    # (on-disk name uses the filesystem-safe slug of the finding id):
     verified = findings[0]
-    bundle = paths.evidence_dir / f"{verified.finding_id}.bundle.json"
+    slug = finding_id_slug(verified.finding_id)
+    bundle = paths.evidence_dir / f"{slug}.bundle.json"
     assert bundle.is_file()
-    assert f"evidence/{verified.finding_id}.bundle.json" in paths.report_md.read_text()
+    assert f"evidence/{slug}.bundle.json" in paths.report_md.read_text()
     assert json.loads(paths.report_json.read_text())["summary"]["verified"] == 1
