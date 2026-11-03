@@ -23,7 +23,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from finlexpurple.detectors.schema import Finding, FindingStatus
-from finlexpurple.evidence.bundle import build_bundle, dumps_bundle
+from finlexpurple.evidence.bundle import build_bundle_v1, bundle_content_hash, dumps_bundle
 from finlexpurple.reporting.aggregate import summarize
 from finlexpurple.reporting.badge import badge_for
 from finlexpurple.reporting.narrative import Explainer, build_narrative, suggested_fix
@@ -115,9 +115,9 @@ def write_report(
         bundle_name: str | None = None
         bundle_hash: str | None = None
         if finding.status is FindingStatus.VERIFIED:
-            bundle = build_bundle(finding)
+            bundle = build_bundle_v1(finding)
             bundle_name = f"evidence/{fid}.bundle.json"
-            bundle_hash = str(bundle["content_hash"])
+            bundle_hash = bundle_content_hash(bundle)
             _write_owner_only(evidence_dir / f"{fid}.bundle.json", dumps_bundle(bundle))
 
         rendered.append(

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.evidence.bundle import BUNDLE_FORMAT_V1, bundle_content_hash
 from finlexpurple.reporting.output_layout import write_report
 
 _NOW = datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc)
@@ -40,8 +41,11 @@ def test_verified_finding_gets_bundle_referenced_in_markdown(tmp_path: Path) -> 
     assert bundle.is_file()
     md = paths.report_md.read_text()
     assert f"evidence/{f.finding_id}.bundle.json" in md
-    # the bundle's content hash is referenced too
-    assert json.loads(bundle.read_text())["content_hash"] in md
+    # the produced bundle is the v1 DSSE/in-toto format, and its integrity hash
+    # is referenced in the markdown.
+    produced = json.loads(bundle.read_text())
+    assert produced["bundle_format"] == BUNDLE_FORMAT_V1
+    assert bundle_content_hash(produced) in md
 
 
 def test_evidence_and_replay_files_written(tmp_path: Path) -> None:
