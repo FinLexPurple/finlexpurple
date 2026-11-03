@@ -53,14 +53,21 @@ def _state(path: Path) -> tuple[RunState, Path]:
     return state, state_path
 
 
-def test_run_directory_is_sanitized_hashed_utc_and_collision_safe(tmp_path: Path) -> None:
-    """Run dirs are slug+hash+UTC, collide into numeric suffixes, and reject traversal."""
+def test_run_directory_is_slug_hash_ulid_unique_and_sortable(tmp_path: Path) -> None:
+    """Run dirs are slug+hash8+ULID: unique per run, time-sortable, traversal-safe."""
 
     now = datetime(2026, 10, 19, 11, 45, tzinfo=timezone.utc)
     first, first_path = create_run_directory("https://example.invalid/a", reports_dir=tmp_path, now=now)
     second, _ = create_run_directory("https://example.invalid/a", reports_dir=tmp_path, now=now)
-    assert first.endswith("20261019T114500Z")
-    assert second.endswith("20261019T114500Z-01")
+    # Same slug + same 8-char target hash, but a unique ULID tail each time.
+    assert first.startswith("https-example-invalid-a-")
+    assert first.rsplit("-", 1)[0] == second.rsplit("-", 1)[0]  # slug-hash8 prefix matches
+    assert first != second  # the ULID tail makes each run id unique
+    assert len(first.rsplit("-", 1)[1]) == 26  # 26-char ULID
+    # ULID is time-ordered, so later minutes sort after earlier ones lexically.
+    later = datetime(2026, 10, 19, 11, 46, tzinfo=timezone.utc)
+    third, _ = create_run_directory("https://example.invalid/a", reports_dir=tmp_path, now=later)
+    assert third.rsplit("-", 1)[1] > first.rsplit("-", 1)[1]
     assert first_path.parent == tmp_path.resolve()
     assert ":" not in first and "\\" not in first and ".." not in first
     with pytest.raises(ValueError):

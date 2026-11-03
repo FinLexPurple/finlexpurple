@@ -20,12 +20,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from finlexpurple.orchestrator.state import InvalidRunStateError, RunState
+from finlexpurple.orchestrator.ulid import new_ulid
 
 _WINDOWS_RESERVED = {
     "CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
-_RUN_ID = re.compile(r"^[a-z0-9_-]+-[0-9a-f]{8}-[0-9]{8}T[0-9]{6}Z(?:-[0-9]{2})?$")
+# <slug>-<hash8>-<ULID>: the slug keeps runs human-readable, the 8-char target
+# hash binds the directory to its target (run_id_for_resume relies on it), and
+# the 26-char Crockford-base32 ULID is the time-ordered, globally-unique tail.
+_RUN_ID = re.compile(r"^[a-z0-9_-]+-[0-9a-f]{8}-[0-9A-HJKMNP-TV-Z]{26}$")
 
 
 def create_run_directory(
@@ -36,14 +40,14 @@ def create_run_directory(
 ) -> tuple[str, Path]:
     """Create a collision-safe target-slug/hash/UTC run directory.
 
-    Returns ``(run_id, directory)``. The run id is
-    ``<slug>-<hash8>-<UTCstamp>`` where the slug is a sanitized, length-capped
-    form of the target, the hash disambiguates targets that sanitize to the
-    same slug, and the UTC timestamp orders runs. ``now`` and ``reports_dir``
-    are injectable for deterministic tests. Raises ``ValueError`` on an empty
-    target, attempted path traversal, or a generated name that fails the strict
-    ``_RUN_ID`` shape, and ``OSError`` if no unique directory is free this
-    second.
+    Returns ``(run_id, directory)``. The run id is ``<slug>-<hash8>-<ULID>``
+    where the slug is a sanitized, length-capped form of the target, the hash
+    disambiguates targets that sanitize to the same slug, and the ULID is a
+    time-ordered, globally-unique tail (so two machines or CI runners never
+    collide, even on the same target in the same millisecond). ``now`` and
+    ``reports_dir`` are injectable for deterministic tests. Raises ``ValueError``
+    on an empty target, attempted path traversal, or a generated name that fails
+    the strict ``_RUN_ID`` shape, and ``OSError`` if no unique directory is free.
     """
 
     canonical = target.strip()
@@ -59,16 +63,13 @@ def create_run_directory(
     if slug.upper() in _WINDOWS_RESERVED:
         slug = f"target-{slug}"
     digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:8]
-    timestamp = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).strftime(
-        "%Y%m%dT%H%M%SZ"
-    )
+    now_ms = int((now or datetime.now(timezone.utc)).astimezone(timezone.utc).timestamp() * 1000)
     root = (reports_dir or Path.cwd() / "finlexpurple-reports").resolve()
     root.mkdir(parents=True, exist_ok=True)
-    stem = f"{slug}-{digest}-{timestamp}"
-    # Two runs of the same target within the same second get a numeric suffix.
-    # mkdir (without exist_ok) is the atomic claim that avoids a race here.
-    for suffix in range(100):
-        run_id = stem if suffix == 0 else f"{stem}-{suffix:02d}"
+    # A fresh ULID per attempt: its 80 random bits make a collision vanishingly
+    # unlikely, and mkdir (without exist_ok) is the atomic claim if one occurs.
+    for _ in range(100):
+        run_id = f"{slug}-{digest}-{new_ulid(now_ms=now_ms)}"
         if len(run_id) > 80:
             raise ValueError("Generated run directory name exceeds the safe length limit.")
         if not _RUN_ID.fullmatch(run_id):
@@ -79,7 +80,7 @@ def create_run_directory(
         except FileExistsError:
             continue
         return run_id, directory
-    raise OSError("Could not allocate a unique run directory for this second.")
+    raise OSError("Could not allocate a unique run directory.")
 
 
 def save_state(path: Path, state: RunState) -> None:
