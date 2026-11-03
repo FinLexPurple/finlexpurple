@@ -90,6 +90,7 @@ def check_dependencies(
                 vulnerability_class="payment_sdk_typosquat",
                 method="SCA",
                 url=f"pkg:{ecosystem}/{name}",
+                purl=f"pkg:{ecosystem}/{name}",
                 payload=f"{ecosystem}:{name}",
                 response_snapshot=labeled_snapshot(
                     {

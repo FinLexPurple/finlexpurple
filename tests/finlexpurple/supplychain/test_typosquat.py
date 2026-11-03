@@ -21,6 +21,7 @@ def test_near_miss_is_flagged_offline_low_confidence() -> None:
     assert len(findings) == 1
     f = findings[0]
     assert f.vulnerability_class == "payment_sdk_typosquat"
+    assert f.purl == "pkg:PyPI/stripee"  # Unit 1.3: a real package coordinate
     assert "mode=offline" in f.expected_signal
     assert "confidence=low" in f.expected_signal
     assert "stripe" in f.expected_signal
