@@ -98,6 +98,48 @@ def tampered_finding(
     )
 
 
+def coupon_apply_finding(
+    endpoint: Endpoint,
+    *,
+    param: str,
+    code: str,
+    response: ProbeResponse,
+    request_headers: dict[str, str],
+    severity: Severity,
+    agent: str,
+) -> Finding:
+    """Build a ``reported`` coupon_abuse finding carrying a re-applicable coupon request.
+
+    The coupon case applies a client-supplied code to a cart/checkout endpoint, so
+    this records the concrete request that was sent — a real ``param=code``
+    ``payload`` (the applied coupon) and the ``request_headers`` as sent — plus the
+    server's ``response_snapshot``. That is the evidence a later deterministic
+    replay re-applies.
+
+    ``expected_signal`` states, in a code-checkable way, the criterion the replay
+    will test: the bogus coupon was accepted and (the decisive step) the discount
+    is durably reflected on the order via an in-scope order-status read-back.
+    Acceptance alone is a necessary, not sufficient, proof — the replay owns the
+    full pass/fail — so the status stays ``reported`` here; capture never verifies.
+    """
+
+    return Finding.new(
+        vulnerability_class="coupon_abuse",
+        method=endpoint.method,
+        url=endpoint.url,
+        payload=f"{param}={code}",
+        headers=dict(request_headers),
+        body=None,
+        response_snapshot=response.text[:_SNAPSHOT_MAX_CHARS],
+        expected_signal=(
+            f"server accepted a client-supplied coupon {code!r} it never issued; reproduced only "
+            "if an in-scope order-status read-back shows the illegitimate discount durably applied"
+        ),
+        severity=severity,
+        agent=agent,
+    )
+
+
 def forged_callback_finding(
     endpoint: Endpoint,
     *,
