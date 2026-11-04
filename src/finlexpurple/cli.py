@@ -24,6 +24,9 @@ from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.bundle import BundleFormatError
 from finlexpurple.evidence.verify import verify_bundle
+from finlexpurple.finance.idor_identities import IdorConfigError
+from finlexpurple.finance.idor_identities import load_identities as load_idor_identities
+from finlexpurple.finance.payment_tests import order_idor
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.gates.authorization import record_attestation
 from finlexpurple.gates.fix_mode import FixModeError, resolve_fix_mode
@@ -352,6 +355,10 @@ def _orchestrate_and_report(
     origin = detect_origin or _detection_origin(state.canonical_target)
     executor: Executor | None = None
     canary_context: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
+    # Hoisted so the once-per-run order-IDOR step (below) can run after the loop.
+    detection_prober: HttpProber | None = None
+    run_financial = False
+    idor_identities = None
     if origin is not None:
         prober = HttpProber(
             EgressPolicy.for_run(target_hosts=[urlsplit(origin).hostname or ""]),  # default-deny egress
@@ -380,6 +387,15 @@ def _orchestrate_and_report(
         selection = select_specialists("\n".join(corpus_parts), state.catalog, provider=None,
                                        fingerprint=fingerprint)
         run_financial = "cashier" in selection.agents
+        detection_prober = prober
+        # Order-IDOR identities are operator-supplied config; a malformed file is a
+        # usage error (exit 2), not a silent skip. Loaded once here so the failure
+        # surfaces during setup rather than mid-run.
+        try:
+            idor_identities = load_idor_identities()
+        except IdorConfigError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from None
         typer.echo(
             f"Selector: {', '.join(selection.agents) or 'none'} "
             f"(relevance via {selection.source})."
@@ -454,6 +470,21 @@ def _orchestrate_and_report(
             f"{final_state.counters['tool_calls']} detector calls; no web detectors ran."
         )
         return
+    # Order IDOR (Unit 2.1): config-driven and once per run (the per-user resource
+    # is behind login, so recon never discovers it). Runs only when the selector
+    # chose cashier AND two identities are configured; a cross-account read is not
+    # state-changing, so it is ungated. Without identities it is simply skipped —
+    # order_idor is never silently verified.
+    if detection_prober is not None and run_financial and idor_identities is not None:
+        idor_findings = order_idor.run_order_idor(
+            origin, agent="cashier", prober=detection_prober, identities=idor_identities,
+        )
+        collected.extend(idor_findings)
+        if idor_findings:
+            typer.echo(
+                f"Order-IDOR: verified={sum(1 for f in idor_findings if f.status is FindingStatus.VERIFIED)}"
+                f"/{len(idor_findings)} (two-session cross-account read)."
+            )
     paths = write_report(
         collected,
         target=state.canonical_target,
