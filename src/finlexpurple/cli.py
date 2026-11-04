@@ -24,6 +24,9 @@ from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.bundle import BundleFormatError
 from finlexpurple.evidence.verify import verify_bundle
+from finlexpurple.finance.idor_identities import IdorConfigError
+from finlexpurple.finance.idor_identities import load_identities as load_idor_identities
+from finlexpurple.finance.payment_tests import order_idor
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.gates.authorization import record_attestation
 from finlexpurple.gates.fix_mode import FixModeError, resolve_fix_mode
@@ -352,6 +355,10 @@ def _orchestrate_and_report(
     origin = detect_origin or _detection_origin(state.canonical_target)
     executor: Executor | None = None
     canary_context: contextlib.AbstractContextManager[object] = contextlib.nullcontext()
+    # Hoisted so the once-per-run order-IDOR step (below) can run after the loop.
+    detection_prober: HttpProber | None = None
+    run_financial = False
+    idor_identities = None
     if origin is not None:
         prober = HttpProber(
             EgressPolicy.for_run(target_hosts=[urlsplit(origin).hostname or ""]),  # default-deny egress
@@ -380,6 +387,15 @@ def _orchestrate_and_report(
         selection = select_specialists("\n".join(corpus_parts), state.catalog, provider=None,
                                        fingerprint=fingerprint)
         run_financial = "cashier" in selection.agents
+        detection_prober = prober
+        # Order-IDOR identities are operator-supplied config; a malformed file is a
+        # usage error (exit 2), not a silent skip. Loaded once here so the failure
+        # surfaces during setup rather than mid-run.
+        try:
+            idor_identities = load_idor_identities()
+        except IdorConfigError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=2) from None
         typer.echo(
             f"Selector: {', '.join(selection.agents) or 'none'} "
             f"(relevance via {selection.source})."
@@ -416,12 +432,14 @@ def _orchestrate_and_report(
         # order-status oracle (never the webhook URL itself); absent one it stays
         # INCONCLUSIVE, never VERIFIED.
         _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
+        _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
                 gate=gate, charge_confirmer=_charge_confirmer,
-                settlement_confirmer=_settlement_confirmer, run_financial=run_financial,
+                settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
+                run_financial=run_financial,
             )}
         )
     else:
@@ -454,6 +472,21 @@ def _orchestrate_and_report(
             f"{final_state.counters['tool_calls']} detector calls; no web detectors ran."
         )
         return
+    # Order IDOR (Unit 2.1): config-driven and once per run (the per-user resource
+    # is behind login, so recon never discovers it). Runs only when the selector
+    # chose cashier AND two identities are configured; a cross-account read is not
+    # state-changing, so it is ungated. Without identities it is simply skipped —
+    # order_idor is never silently verified.
+    if detection_prober is not None and run_financial and idor_identities is not None:
+        idor_findings = order_idor.run_order_idor(
+            origin, agent="cashier", prober=detection_prober, identities=idor_identities,
+        )
+        collected.extend(idor_findings)
+        if idor_findings:
+            typer.echo(
+                f"Order-IDOR: verified={sum(1 for f in idor_findings if f.status is FindingStatus.VERIFIED)}"
+                f"/{len(idor_findings)} (two-session cross-account read)."
+            )
     paths = write_report(
         collected,
         target=state.canonical_target,
@@ -608,6 +641,39 @@ def _settlement_confirmer_for(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
             return None
         return webhook_bypass.PAID_MARKER in text and webhook_bypass.FORGED_ORDER_ID in text
+
+    return confirm
+
+
+def _coupon_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, str], bool | None]:
+    """Build the coupon-abuse read-back from the same operator-provided order oracle.
+
+    The bogus coupon's durable effect — did the illegitimate discount persist on
+    the cart order? — is read from the SAME order-status oracle webhook_bypass uses
+    (``--order-status-url``), pointed at the cart order id. Without an oracle URL a
+    real read-back is impossible, so it returns ``None`` and the finding stays
+    INCONCLUSIVE — never VERIFIED without a genuine read. With one, it substitutes
+    the cart order id for a literal ``{order_id}`` placeholder, GETs that URL
+    through the egress-checked prober (in-scope only), and returns ``True`` only
+    when the applied coupon code is genuinely recorded on the persisted order,
+    ``False`` when the read succeeds without it, and ``None`` when it cannot read.
+    A discount signal is never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import coupon_abuse
+
+    def confirm(finding: Finding, code: str) -> bool | None:
+        del finding  # the coupon targets the fixed cart order; the oracle URL addresses it
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", coupon_abuse.CART_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        return code in text
 
     return confirm
 
@@ -1153,10 +1219,20 @@ def run_agent(
     # (--order-status-url, or its FLP_ORDER_STATUS_URL env fallback via typer);
     # absent one it stays INCONCLUSIVE, never VERIFIED.
     _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
+    _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
+
+    # Order-IDOR identities (optional); a malformed config file is a usage error.
+    try:
+        idor_identities = load_idor_identities()
+    except IdorConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
 
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
+        coupon_confirmer=_coupon_confirmer,
+        idor_identities=idor_identities,
     )
     try:
         result = agent_invoker.invoke(resolved, request)

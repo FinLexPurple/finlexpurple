@@ -36,6 +36,7 @@ from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
+from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
@@ -84,6 +85,7 @@ class WebDetector:
         gate: ApprovalGate | None = None,
         charge_confirmer: ChargeConfirmer | None = None,
         settlement_confirmer: SettlementConfirmer | None = None,
+        coupon_confirmer: CouponConfirmer | None = None,
         run_financial: bool = True,
     ) -> None:
         self._origin = origin
@@ -94,6 +96,7 @@ class WebDetector:
         self._gate = gate
         self._charge_confirmer = charge_confirmer
         self._settlement_confirmer = settlement_confirmer
+        self._coupon_confirmer = coupon_confirmer
         # The scan front-door selector (Decision 1) sets this: the financial
         # price-tampering step runs only when the selector chose the 'cashier'
         # specialist for this target, so a non-payment target never gets probed.
@@ -136,6 +139,7 @@ class WebDetector:
             self._sink.extend(financial_specialist.capture_and_verify(
                 reconstructed, agent="cashier", prober=self._prober, gate=self._gate,
                 charge_confirmer=self._charge_confirmer, settlement_confirmer=self._settlement_confirmer,
+                coupon_confirmer=self._coupon_confirmer,
             ))
 
         # Persisted observation stays findings-empty (privacy guarantee); the

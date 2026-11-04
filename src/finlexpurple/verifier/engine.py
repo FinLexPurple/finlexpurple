@@ -21,6 +21,7 @@ from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
+from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
@@ -40,6 +41,7 @@ def verify(
     gate: ApprovalGate | None = None,
     charge_confirmer: ChargeConfirmer | None = None,
     settlement_confirmer: SettlementConfirmer | None = None,
+    coupon_confirmer: CouponConfirmer | None = None,
 ) -> Finding:
     """Replay ``finding`` by its class and update its status/verification_log in place.
 
@@ -63,6 +65,7 @@ def verify(
         gate=gate,
         charge_confirmer=charge_confirmer,
         settlement_confirmer=settlement_confirmer,
+        coupon_confirmer=coupon_confirmer,
     )
     capability = capabilities.capability_for(finding.vulnerability_class)
     if capability is None or capability.replay is None:

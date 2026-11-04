@@ -21,9 +21,11 @@ from dataclasses import dataclass
 from finlexpurple.detectors.dispatch import run_relevant
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding, FindingStatus
+from finlexpurple.finance.idor_identities import IdorIdentities
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.verifier import engine as verifier_engine
+from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
@@ -55,6 +57,10 @@ class AgentRequest:
     gate: ApprovalGate | None = None
     charge_confirmer: ChargeConfirmer | None = None
     settlement_confirmer: SettlementConfirmer | None = None
+    coupon_confirmer: CouponConfirmer | None = None
+    # Two-session identities for active order-IDOR (Unit 2.1); absent => order-IDOR
+    # is not actively verified in isolation and stays a passive candidate.
+    idor_identities: IdorIdentities | None = None
 
 
 @dataclass(frozen=True)
@@ -173,7 +179,7 @@ def _run_payment_specialist(request: AgentRequest, *, name: str, note: str) -> A
 
     assert request.target is not None and request.recon is not None
     from finlexpurple.finance import payment_tests
-    from finlexpurple.finance.payment_tests import financial_specialist
+    from finlexpurple.finance.payment_tests import financial_specialist, order_idor
 
     endpoints = request.recon(request.target)
     findings: list[Finding] = []
@@ -182,11 +188,24 @@ def _run_payment_specialist(request: AgentRequest, *, name: str, note: str) -> A
             endpoint, agent=name, prober=request.prober, gate=request.gate,
             charge_confirmer=request.charge_confirmer,
             settlement_confirmer=request.settlement_confirmer,
+            coupon_confirmer=request.coupon_confirmer,
         ))
+    # Active order-IDOR (two-session cross-account read) when identities are
+    # configured — the SAME helper the scan path uses, so an isolated specialist
+    # run reaches the same status. A read, so ungated.
+    idor_findings = order_idor.run_order_idor(
+        request.target, agent=name, prober=request.prober, identities=request.idor_identities,
+    )
+    findings.extend(idor_findings)
     # The remaining read-only surface checks stay passive candidates (reported).
+    # Skip the replay-backed classes and, when order-IDOR was actively verified,
+    # its passive duplicate too.
+    actively_verified = set(financial_specialist.REPLAY_BACKED_CLASSES)
+    if idor_findings:
+        actively_verified.add("order_idor")
     findings.extend(
         finding for finding in payment_tests.run_all(endpoints, agent=name)
-        if finding.vulnerability_class not in financial_specialist.REPLAY_BACKED_CLASSES
+        if finding.vulnerability_class not in actively_verified
     )
     verified = sum(1 for finding in findings if finding.status is FindingStatus.VERIFIED)
     return AgentResult(
