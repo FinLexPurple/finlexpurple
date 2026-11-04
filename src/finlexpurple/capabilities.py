@@ -52,6 +52,7 @@ from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.verifier.replay import (
     cache_poisoning_replay,
+    coupon_abuse_replay,
     idor_replay,
     order_idor_replay,
     price_tampering_replay,
@@ -61,6 +62,7 @@ from finlexpurple.verifier.replay import (
     xss_replay,
 )
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
+from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
@@ -99,6 +101,7 @@ class ReplayContext:
     gate: ApprovalGate | None = None
     charge_confirmer: ChargeConfirmer | None = None
     settlement_confirmer: SettlementConfirmer | None = None
+    coupon_confirmer: CouponConfirmer | None = None
 
 
 WebDetector = Callable[[Endpoint, Prober], list[Finding]]
@@ -179,6 +182,10 @@ def _webhook_bypass_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult
 
 def _order_idor_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
     return order_idor_replay.replay(finding, ctx.prober, ctx.sessions)
+
+
+def _coupon_abuse_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
+    return coupon_abuse_replay.replay(finding, ctx.prober, ctx.gate, ctx.coupon_confirmer)
 
 
 # --- The registry -------------------------------------------------------------
@@ -296,6 +303,20 @@ _CAPABILITIES: tuple[Capability, ...] = (
         required_collaborators=frozenset({PROBER, SESSIONS}),
         gate_category=None,
         evidence_shape="cross_session_response",
+        agent=None,
+    ),
+    # Coupon abuse (Unit 2.2): applying a coupon mutates the cart, so it is gated
+    # (state-changing) and verified by an order-status read-back that shows the
+    # bogus coupon's discount durably applied.
+    Capability(
+        vulnerability_class="coupon_abuse",
+        family="financial",
+        detector=None,
+        relevance=None,
+        replay=_coupon_abuse_replay,
+        required_collaborators=frozenset({PROBER, GATE}),
+        gate_category=DERIVE_FROM_AGENT,
+        evidence_shape="discounted_total_readback",
         agent=None,
     ),
 )
