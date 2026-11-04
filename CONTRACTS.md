@@ -70,6 +70,7 @@ set), so existing `.env` files keep working.
 | `FLP_ORDER_STATUS_URL` | (new in 0.4.0) |
 | `FLP_LLM_PLAN` | (new in 0.4.0) |
 | `FLP_RUN_STORE` | (new in 0.4.0) run-state backend: `json` (default) or `sqlite` (WAL). |
+| `FLP_IDOR_IDENTITIES` | (new in 0.4.0) path to a JSON file with two login identities + the owner's resource path, enabling two-session order-IDOR verification. Unset ⇒ order-IDOR stays a passive candidate, never verified. |
 | `FLP_INTEL_PACKS_PULL_URL` / `FLP_INTEL_PACKS_SIG_URL` | `INTEL_PACKS_PULL_URL` / `INTEL_PACKS_SIG_URL` |
 | `FLP_INTEL_PINNED_IDENTITY` / `FLP_INTEL_EXPECTED_SHA256` | `INTEL_PINNED_IDENTITY` / `INTEL_EXPECTED_SHA256` |
 | `FLP_INTEL_PACKS_EGRESS_HOSTS` | `INTEL_PACKS_EGRESS_HOSTS` |
