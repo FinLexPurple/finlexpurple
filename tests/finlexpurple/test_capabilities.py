@@ -33,11 +33,20 @@ def test_web_capabilities_have_a_detector_and_relevance() -> None:
             assert cap.detector is not None and cap.relevance is not None
 
 
-def test_financial_capabilities_have_a_replay_and_derive_gate_from_agent() -> None:
+def test_financial_capabilities_have_a_replay_and_gate_category_is_consistent() -> None:
     for cap in capabilities.all_capabilities():
-        if cap.family == "financial":
-            assert cap.replay is not None
+        if cap.family != "financial":
+            continue
+        assert cap.replay is not None
+        # Gate category is either None (an ungated read, e.g. order_idor) or
+        # DERIVE_FROM_AGENT (a state-changing class) — never a hard-coded category.
+        assert cap.gate_category in (None, capabilities.DERIVE_FROM_AGENT)
+        # A gated class derives its category from the acting agent; an ungated one
+        # declares no gate collaborator.
+        if capabilities.GATE in cap.required_collaborators:
             assert cap.gate_category == capabilities.DERIVE_FROM_AGENT
+        else:
+            assert cap.gate_category is None
 
 
 def test_capability_for_unknown_class_is_none() -> None:
