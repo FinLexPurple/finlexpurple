@@ -432,12 +432,14 @@ def _orchestrate_and_report(
         # order-status oracle (never the webhook URL itself); absent one it stays
         # INCONCLUSIVE, never VERIFIED.
         _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
+        _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
                 gate=gate, charge_confirmer=_charge_confirmer,
-                settlement_confirmer=_settlement_confirmer, run_financial=run_financial,
+                settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
+                run_financial=run_financial,
             )}
         )
     else:
@@ -639,6 +641,39 @@ def _settlement_confirmer_for(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
             return None
         return webhook_bypass.PAID_MARKER in text and webhook_bypass.FORGED_ORDER_ID in text
+
+    return confirm
+
+
+def _coupon_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, str], bool | None]:
+    """Build the coupon-abuse read-back from the same operator-provided order oracle.
+
+    The bogus coupon's durable effect — did the illegitimate discount persist on
+    the cart order? — is read from the SAME order-status oracle webhook_bypass uses
+    (``--order-status-url``), pointed at the cart order id. Without an oracle URL a
+    real read-back is impossible, so it returns ``None`` and the finding stays
+    INCONCLUSIVE — never VERIFIED without a genuine read. With one, it substitutes
+    the cart order id for a literal ``{order_id}`` placeholder, GETs that URL
+    through the egress-checked prober (in-scope only), and returns ``True`` only
+    when the applied coupon code is genuinely recorded on the persisted order,
+    ``False`` when the read succeeds without it, and ``None`` when it cannot read.
+    A discount signal is never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import coupon_abuse
+
+    def confirm(finding: Finding, code: str) -> bool | None:
+        del finding  # the coupon targets the fixed cart order; the oracle URL addresses it
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", coupon_abuse.CART_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        return code in text
 
     return confirm
 
@@ -1184,6 +1219,7 @@ def run_agent(
     # (--order-status-url, or its FLP_ORDER_STATUS_URL env fallback via typer);
     # absent one it stays INCONCLUSIVE, never VERIFIED.
     _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
+    _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
 
     # Order-IDOR identities (optional); a malformed config file is a usage error.
     try:
@@ -1195,6 +1231,7 @@ def run_agent(
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
+        coupon_confirmer=_coupon_confirmer,
         idor_identities=idor_identities,
     )
     try:
