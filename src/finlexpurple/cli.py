@@ -1185,9 +1185,17 @@ def run_agent(
     # absent one it stays INCONCLUSIVE, never VERIFIED.
     _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
 
+    # Order-IDOR identities (optional); a malformed config file is a usage error.
+    try:
+        idor_identities = load_idor_identities()
+    except IdorConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=2) from None
+
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
+        idor_identities=idor_identities,
     )
     try:
         result = agent_invoker.invoke(resolved, request)
