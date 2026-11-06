@@ -26,6 +26,7 @@ from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
@@ -58,6 +59,7 @@ class AgentRequest:
     charge_confirmer: ChargeConfirmer | None = None
     settlement_confirmer: SettlementConfirmer | None = None
     coupon_confirmer: CouponConfirmer | None = None
+    payment_status_confirmer: PaymentStatusConfirmer | None = None
     # Two-session identities for active order-IDOR (Unit 2.1); absent => order-IDOR
     # is not actively verified in isolation and stays a passive candidate.
     idor_identities: IdorIdentities | None = None
@@ -189,6 +191,7 @@ def _run_payment_specialist(request: AgentRequest, *, name: str, note: str) -> A
             charge_confirmer=request.charge_confirmer,
             settlement_confirmer=request.settlement_confirmer,
             coupon_confirmer=request.coupon_confirmer,
+            payment_status_confirmer=request.payment_status_confirmer,
         ))
     # Active order-IDOR (two-session cross-account read) when identities are
     # configured — the SAME helper the scan path uses, so an isolated specialist
