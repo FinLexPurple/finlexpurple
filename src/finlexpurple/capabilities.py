@@ -55,6 +55,7 @@ from finlexpurple.verifier.replay import (
     coupon_abuse_replay,
     idor_replay,
     order_idor_replay,
+    payment_status_trust_replay,
     price_tampering_replay,
     sqli_replay,
     ssrf_replay,
@@ -63,6 +64,7 @@ from finlexpurple.verifier.replay import (
 )
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
@@ -102,6 +104,7 @@ class ReplayContext:
     charge_confirmer: ChargeConfirmer | None = None
     settlement_confirmer: SettlementConfirmer | None = None
     coupon_confirmer: CouponConfirmer | None = None
+    payment_status_confirmer: PaymentStatusConfirmer | None = None
 
 
 WebDetector = Callable[[Endpoint, Prober], list[Finding]]
@@ -186,6 +189,12 @@ def _order_idor_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
 
 def _coupon_abuse_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
     return coupon_abuse_replay.replay(finding, ctx.prober, ctx.gate, ctx.coupon_confirmer)
+
+
+def _payment_status_trust_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
+    return payment_status_trust_replay.replay(
+        finding, ctx.prober, ctx.gate, ctx.payment_status_confirmer
+    )
 
 
 # --- The registry -------------------------------------------------------------
@@ -317,6 +326,20 @@ _CAPABILITIES: tuple[Capability, ...] = (
         required_collaborators=frozenset({PROBER, GATE}),
         gate_category=DERIVE_FROM_AGENT,
         evidence_shape="discounted_total_readback",
+        agent=None,
+    ),
+    # Payment-status trust (Unit 2.3): setting a client-controlled order status is
+    # state-changing, so it is gated and verified by an order-status read-back
+    # showing the order durably marked with the client-set status (no settlement).
+    Capability(
+        vulnerability_class="payment_status_trust",
+        family="financial",
+        detector=None,
+        relevance=None,
+        replay=_payment_status_trust_replay,
+        required_collaborators=frozenset({PROBER, GATE}),
+        gate_category=DERIVE_FROM_AGENT,
+        evidence_shape="paid_status_readback",
         agent=None,
     ),
 )
