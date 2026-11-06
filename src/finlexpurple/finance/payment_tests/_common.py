@@ -140,6 +140,48 @@ def coupon_apply_finding(
     )
 
 
+def status_set_finding(
+    endpoint: Endpoint,
+    *,
+    param: str,
+    status: str,
+    response: ProbeResponse,
+    request_headers: dict[str, str],
+    severity: Severity,
+    agent: str,
+) -> Finding:
+    """Build a ``reported`` payment_status_trust finding carrying a re-sendable status set.
+
+    The payment-status case sets a client-controllable status field (e.g.
+    ``status=paid``) on an order endpoint, so this records the concrete request
+    that was sent — a real ``param=status`` ``payload`` and the ``request_headers``
+    as sent — plus the server's ``response_snapshot``. That is the evidence a later
+    deterministic replay re-sends.
+
+    ``expected_signal`` states, in a code-checkable way, the criterion the replay
+    will test: the client-set status was accepted and (the decisive step) the order
+    is durably marked with it via an in-scope order-status read-back, without any
+    real settlement. Acceptance alone is a necessary, not sufficient, proof — the
+    replay owns the full pass/fail — so the status stays ``reported`` here.
+    """
+
+    return Finding.new(
+        vulnerability_class="payment_status_trust",
+        method=endpoint.method,
+        url=endpoint.url,
+        payload=f"{param}={status}",
+        headers=dict(request_headers),
+        body=None,
+        response_snapshot=response.text[:_SNAPSHOT_MAX_CHARS],
+        expected_signal=(
+            f"server accepted a client-set payment status {status!r}; reproduced only if an "
+            "in-scope order-status read-back shows the order durably marked with it without settlement"
+        ),
+        severity=severity,
+        agent=agent,
+    )
+
+
 def forged_callback_finding(
     endpoint: Endpoint,
     *,
