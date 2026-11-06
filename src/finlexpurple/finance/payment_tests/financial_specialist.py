@@ -21,17 +21,23 @@ from __future__ import annotations
 
 from finlexpurple.detectors.prober import Prober
 from finlexpurple.detectors.schema import Finding
-from finlexpurple.finance.payment_tests import coupon_abuse, price_tampering, webhook_bypass
+from finlexpurple.finance.payment_tests import (
+    coupon_abuse,
+    payment_status_trust,
+    price_tampering,
+    webhook_bypass,
+)
 from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome
 from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
 # The classes this helper owns (actively captured + deterministically verified);
 # any other financial check stays a passive read-only candidate elsewhere.
-REPLAY_BACKED_CLASSES = ("price_tampering", "webhook_bypass", "coupon_abuse")
+REPLAY_BACKED_CLASSES = ("price_tampering", "webhook_bypass", "coupon_abuse", "payment_status_trust")
 
 _PROCEED = (GateOutcome.ALLOWED, GateOutcome.APPROVED)
 
@@ -55,6 +61,7 @@ def capture_and_verify(
     charge_confirmer: ChargeConfirmer | None = None,
     settlement_confirmer: SettlementConfirmer | None = None,
     coupon_confirmer: CouponConfirmer | None = None,
+    payment_status_confirmer: PaymentStatusConfirmer | None = None,
 ) -> list[Finding]:
     """Gate -> active capture -> deterministic verify for the replay-backed classes on one endpoint.
 
@@ -113,5 +120,22 @@ def capture_and_verify(
         else:
             coupon_findings = coupon_abuse.check([endpoint], agent=agent)
         findings.extend(coupon_findings)
+
+    # Payment-status trust: only status-SETTING endpoints; setting a client status
+    # is state-changing, so gate before sending.
+    if payment_status_trust.looks_like_status(endpoint):
+        if prober is not None and _may_proceed(
+            gate,
+            description=f"payment-status test (sets a client-controlled status) against {endpoint.url}",
+            category=agent,
+        ):
+            status_findings = payment_status_trust.check([endpoint], agent=agent, prober=prober)
+            for finding in status_findings:
+                verifier_engine.verify(
+                    finding, prober=prober, gate=gate, payment_status_confirmer=payment_status_confirmer
+                )
+        else:
+            status_findings = payment_status_trust.check([endpoint], agent=agent)
+        findings.extend(status_findings)
 
     return findings
