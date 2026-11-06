@@ -433,12 +433,14 @@ def _orchestrate_and_report(
         # INCONCLUSIVE, never VERIFIED.
         _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
         _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
+        _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
                 gate=gate, charge_confirmer=_charge_confirmer,
                 settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
+                payment_status_confirmer=_payment_status_confirmer,
                 run_financial=run_financial,
             )}
         )
@@ -674,6 +676,39 @@ def _coupon_confirmer_for(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
             return None
         return code in text
+
+    return confirm
+
+
+def _payment_status_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, str], bool | None]:
+    """Build the payment-status read-back from the same operator-provided order oracle.
+
+    The client-set status's durable effect — is the order durably marked (e.g.
+    ``paid``) without settlement? — is read from the SAME order-status oracle
+    (``--order-status-url``), pointed at the dedicated status order id. Without an
+    oracle URL a real read-back is impossible, so it returns ``None`` and the
+    finding stays INCONCLUSIVE — never VERIFIED without a genuine read. With one,
+    it substitutes the status order id for a literal ``{order_id}`` placeholder,
+    GETs that URL through the egress-checked prober (in-scope only), and returns
+    ``True`` only when the order genuinely shows that status, ``False`` when the
+    read succeeds without it, and ``None`` when it cannot read. A paid signal is
+    never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import payment_status_trust
+
+    def confirm(finding: Finding, status: str) -> bool | None:
+        del finding  # the set targets the fixed status order; the oracle URL addresses it
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", payment_status_trust.STATUS_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        return status in text and payment_status_trust.STATUS_ORDER_ID in text
 
     return confirm
 
@@ -1220,6 +1255,7 @@ def run_agent(
     # absent one it stays INCONCLUSIVE, never VERIFIED.
     _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
     _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
+    _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
 
     # Order-IDOR identities (optional); a malformed config file is a usage error.
     try:
@@ -1231,7 +1267,7 @@ def run_agent(
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
-        coupon_confirmer=_coupon_confirmer,
+        coupon_confirmer=_coupon_confirmer, payment_status_confirmer=_payment_status_confirmer,
         idor_identities=idor_identities,
     )
     try:
