@@ -55,7 +55,9 @@ from finlexpurple.verifier.replay import (
     coupon_abuse_replay,
     idor_replay,
     order_idor_replay,
+    payment_status_trust_replay,
     price_tampering_replay,
+    refund_abuse_replay,
     sqli_replay,
     ssrf_replay,
     webhook_bypass_replay,
@@ -63,7 +65,9 @@ from finlexpurple.verifier.replay import (
 )
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
 from finlexpurple.verifier.status import ReplayResult
@@ -102,6 +106,8 @@ class ReplayContext:
     charge_confirmer: ChargeConfirmer | None = None
     settlement_confirmer: SettlementConfirmer | None = None
     coupon_confirmer: CouponConfirmer | None = None
+    payment_status_confirmer: PaymentStatusConfirmer | None = None
+    refund_confirmer: RefundConfirmer | None = None
 
 
 WebDetector = Callable[[Endpoint, Prober], list[Finding]]
@@ -186,6 +192,16 @@ def _order_idor_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
 
 def _coupon_abuse_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
     return coupon_abuse_replay.replay(finding, ctx.prober, ctx.gate, ctx.coupon_confirmer)
+
+
+def _payment_status_trust_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
+    return payment_status_trust_replay.replay(
+        finding, ctx.prober, ctx.gate, ctx.payment_status_confirmer
+    )
+
+
+def _refund_abuse_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
+    return refund_abuse_replay.replay(finding, ctx.prober, ctx.gate, ctx.refund_confirmer)
 
 
 # --- The registry -------------------------------------------------------------
@@ -317,6 +333,35 @@ _CAPABILITIES: tuple[Capability, ...] = (
         required_collaborators=frozenset({PROBER, GATE}),
         gate_category=DERIVE_FROM_AGENT,
         evidence_shape="discounted_total_readback",
+        agent=None,
+    ),
+    # Payment-status trust (Unit 2.3): setting a client-controlled order status is
+    # state-changing, so it is gated and verified by an order-status read-back
+    # showing the order durably marked with the client-set status (no settlement).
+    Capability(
+        vulnerability_class="payment_status_trust",
+        family="financial",
+        detector=None,
+        relevance=None,
+        replay=_payment_status_trust_replay,
+        required_collaborators=frozenset({PROBER, GATE}),
+        gate_category=DERIVE_FROM_AGENT,
+        evidence_shape="paid_status_readback",
+        agent=None,
+    ),
+    # Refund abuse (Unit 2.4): issuing a refund exceeding the amount paid (no
+    # amount/idempotency check) is state-changing, so it is gated and verified by a
+    # refund-status read-back showing the order's refunded total durably exceeding
+    # the amount paid. The gated re-send is itself the duplicate/double-refund case.
+    Capability(
+        vulnerability_class="refund_abuse",
+        family="financial",
+        detector=None,
+        relevance=None,
+        replay=_refund_abuse_replay,
+        required_collaborators=frozenset({PROBER, GATE}),
+        gate_category=DERIVE_FROM_AGENT,
+        evidence_shape="over_refund_readback",
         agent=None,
     ),
 )

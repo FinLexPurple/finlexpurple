@@ -22,7 +22,9 @@ from finlexpurple.detectors.schema import Finding
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
 from finlexpurple.verifier.status import ReplayResult, status_for
@@ -42,6 +44,8 @@ def verify(
     charge_confirmer: ChargeConfirmer | None = None,
     settlement_confirmer: SettlementConfirmer | None = None,
     coupon_confirmer: CouponConfirmer | None = None,
+    payment_status_confirmer: PaymentStatusConfirmer | None = None,
+    refund_confirmer: RefundConfirmer | None = None,
 ) -> Finding:
     """Replay ``finding`` by its class and update its status/verification_log in place.
 
@@ -66,6 +70,8 @@ def verify(
         charge_confirmer=charge_confirmer,
         settlement_confirmer=settlement_confirmer,
         coupon_confirmer=coupon_confirmer,
+        payment_status_confirmer=payment_status_confirmer,
+        refund_confirmer=refund_confirmer,
     )
     capability = capabilities.capability_for(finding.vulnerability_class)
     if capability is None or capability.replay is None:

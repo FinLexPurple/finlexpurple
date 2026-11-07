@@ -37,7 +37,9 @@ from finlexpurple.recon.fingerprint import Fingerprint
 from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
+from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
 
@@ -86,6 +88,8 @@ class WebDetector:
         charge_confirmer: ChargeConfirmer | None = None,
         settlement_confirmer: SettlementConfirmer | None = None,
         coupon_confirmer: CouponConfirmer | None = None,
+        payment_status_confirmer: PaymentStatusConfirmer | None = None,
+        refund_confirmer: RefundConfirmer | None = None,
         run_financial: bool = True,
     ) -> None:
         self._origin = origin
@@ -97,6 +101,8 @@ class WebDetector:
         self._charge_confirmer = charge_confirmer
         self._settlement_confirmer = settlement_confirmer
         self._coupon_confirmer = coupon_confirmer
+        self._payment_status_confirmer = payment_status_confirmer
+        self._refund_confirmer = refund_confirmer
         # The scan front-door selector (Decision 1) sets this: the financial
         # price-tampering step runs only when the selector chose the 'cashier'
         # specialist for this target, so a non-payment target never gets probed.
@@ -140,6 +146,8 @@ class WebDetector:
                 reconstructed, agent="cashier", prober=self._prober, gate=self._gate,
                 charge_confirmer=self._charge_confirmer, settlement_confirmer=self._settlement_confirmer,
                 coupon_confirmer=self._coupon_confirmer,
+                payment_status_confirmer=self._payment_status_confirmer,
+                refund_confirmer=self._refund_confirmer,
             ))
 
         # Persisted observation stays findings-empty (privacy guarantee); the

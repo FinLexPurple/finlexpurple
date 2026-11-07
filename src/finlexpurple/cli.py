@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -433,12 +434,16 @@ def _orchestrate_and_report(
         # INCONCLUSIVE, never VERIFIED.
         _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
         _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
+        _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
+        _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
                 gate=gate, charge_confirmer=_charge_confirmer,
                 settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
+                payment_status_confirmer=_payment_status_confirmer,
+                refund_confirmer=_refund_confirmer,
                 run_financial=run_financial,
             )}
         )
@@ -674,6 +679,89 @@ def _coupon_confirmer_for(
         except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
             return None
         return code in text
+
+    return confirm
+
+
+def _payment_status_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, str], bool | None]:
+    """Build the payment-status read-back from the same operator-provided order oracle.
+
+    The client-set status's durable effect — is the order durably marked (e.g.
+    ``paid``) without settlement? — is read from the SAME order-status oracle
+    (``--order-status-url``), pointed at the dedicated status order id. Without an
+    oracle URL a real read-back is impossible, so it returns ``None`` and the
+    finding stays INCONCLUSIVE — never VERIFIED without a genuine read. With one,
+    it substitutes the status order id for a literal ``{order_id}`` placeholder,
+    GETs that URL through the egress-checked prober (in-scope only), and returns
+    ``True`` only when the order genuinely shows that status, ``False`` when the
+    read succeeds without it, and ``None`` when it cannot read. A paid signal is
+    never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import payment_status_trust
+
+    def confirm(finding: Finding, status: str) -> bool | None:
+        del finding  # the set targets the fixed status order; the oracle URL addresses it
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", payment_status_trust.STATUS_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        return status in text and payment_status_trust.STATUS_ORDER_ID in text
+
+    return confirm
+
+
+# Machine-readable tokens the refund-status oracle exposes for the read-back: the
+# order's durable amount paid and refunded total. The tool parses BOTH and owns the
+# over-refund verdict (refunded > paid) itself — it never trusts a lab-computed flag.
+_REFUND_AMOUNT_RE = re.compile(r'data-refund-amount="([0-9]+(?:\.[0-9]+)?)"')
+_REFUND_REFUNDED_RE = re.compile(r'data-refund-refunded="([0-9]+(?:\.[0-9]+)?)"')
+
+
+def _refund_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, str], bool | None]:
+    """Build the refund over-refund read-back from the same operator-provided order oracle.
+
+    The refund's durable effect — does the order's refunded total exceed the amount
+    paid? — is read from the SAME order-status oracle (``--order-status-url``),
+    pointed at the dedicated refund order id. Without an oracle URL a real read-back
+    is impossible, so it returns ``None`` and the finding stays INCONCLUSIVE — never
+    VERIFIED without a genuine read. With one, it substitutes the refund order id for
+    a literal ``{order_id}`` placeholder, GETs that URL through the egress-checked
+    prober (in-scope only), parses the durable ``amount`` and ``refunded`` tokens,
+    and returns ``True`` only when ``refunded > amount`` (a durable over-refund),
+    ``False`` when the read succeeds and it does not, and ``None`` when it cannot read
+    or parse both numbers. The tool, not the lab, owns the comparison; an over-refund
+    signal is never synthesized.
+    """
+
+    from finlexpurple.finance.payment_tests import refund_abuse
+
+    def confirm(finding: Finding, amount: str) -> bool | None:
+        del finding, amount  # the verdict compares durable refunded vs paid, not the requested value
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", refund_abuse.REFUND_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        if refund_abuse.REFUND_ORDER_ID not in text:
+            return None
+        paid_match = _REFUND_AMOUNT_RE.search(text)
+        refunded_match = _REFUND_REFUNDED_RE.search(text)
+        if paid_match is None or refunded_match is None:
+            return None
+        try:
+            return float(refunded_match.group(1)) > float(paid_match.group(1))
+        except ValueError:  # non-numeric durable state -> unconfirmable
+            return None
 
     return confirm
 
@@ -1220,6 +1308,8 @@ def run_agent(
     # absent one it stays INCONCLUSIVE, never VERIFIED.
     _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
     _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
+    _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
+    _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
 
     # Order-IDOR identities (optional); a malformed config file is a usage error.
     try:
@@ -1231,7 +1321,8 @@ def run_agent(
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
-        coupon_confirmer=_coupon_confirmer,
+        coupon_confirmer=_coupon_confirmer, payment_status_confirmer=_payment_status_confirmer,
+        refund_confirmer=_refund_confirmer,
         idor_identities=idor_identities,
     )
     try:
