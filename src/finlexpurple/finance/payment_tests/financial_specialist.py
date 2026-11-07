@@ -25,6 +25,7 @@ from finlexpurple.finance.payment_tests import (
     coupon_abuse,
     payment_status_trust,
     price_tampering,
+    refund_abuse,
     webhook_bypass,
 )
 from finlexpurple.gates.approval_gate import ApprovalGate, GateAction, GateOutcome
@@ -33,11 +34,18 @@ from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
 # The classes this helper owns (actively captured + deterministically verified);
 # any other financial check stays a passive read-only candidate elsewhere.
-REPLAY_BACKED_CLASSES = ("price_tampering", "webhook_bypass", "coupon_abuse", "payment_status_trust")
+REPLAY_BACKED_CLASSES = (
+    "price_tampering",
+    "webhook_bypass",
+    "coupon_abuse",
+    "payment_status_trust",
+    "refund_abuse",
+)
 
 _PROCEED = (GateOutcome.ALLOWED, GateOutcome.APPROVED)
 
@@ -62,6 +70,7 @@ def capture_and_verify(
     settlement_confirmer: SettlementConfirmer | None = None,
     coupon_confirmer: CouponConfirmer | None = None,
     payment_status_confirmer: PaymentStatusConfirmer | None = None,
+    refund_confirmer: RefundConfirmer | None = None,
 ) -> list[Finding]:
     """Gate -> active capture -> deterministic verify for the replay-backed classes on one endpoint.
 
@@ -137,5 +146,24 @@ def capture_and_verify(
         else:
             status_findings = payment_status_trust.check([endpoint], agent=agent)
         findings.extend(status_findings)
+
+    # Refund abuse: only refund-ISSUING endpoints; issuing an over-refund is
+    # state-changing, so gate before sending. The gated verify re-send is a single,
+    # rate-limited request (never uncontrolled concurrency) and doubles as the
+    # duplicate/double-refund corollary.
+    if refund_abuse.looks_like_refund(endpoint):
+        if prober is not None and _may_proceed(
+            gate,
+            description=f"refund-abuse test (issues a refund exceeding the amount paid) against {endpoint.url}",
+            category=agent,
+        ):
+            refund_findings = refund_abuse.check([endpoint], agent=agent, prober=prober)
+            for finding in refund_findings:
+                verifier_engine.verify(
+                    finding, prober=prober, gate=gate, refund_confirmer=refund_confirmer
+                )
+        else:
+            refund_findings = refund_abuse.check([endpoint], agent=agent)
+        findings.extend(refund_findings)
 
     return findings
