@@ -32,6 +32,11 @@ classifiers = [
 
 dependencies = [
     "typer>=0.12",
+    # Interactive `chat` REPL UI (imported only by the chat command, never on the
+    # hot path of other commands): rich for rendering, prompt_toolkit for the input
+    # loop, history, and the scrollback-safe bottom toolbar.
+    "rich>=13",
+    "prompt_toolkit>=3.0",
     "python-dotenv>=1.0",
     "pydantic>=2",
     "pydantic-settings>=2",
