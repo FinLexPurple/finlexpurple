@@ -84,9 +84,9 @@ agents_app = typer.Typer(help="List and inspect the named security agents.", no_
 #   0 = clean · 1 = tool/runtime error · 2 = usage/argument error ·
 #   3 = --fail-on threshold matched (e.g. a VERIFIED finding).
 _EXIT_VERIFIED_THRESHOLD = 3
-# --format values. json+md are the default pair; sarif (Unit 3.1) is opt-in.
-# cyclonedx/spdx arrive in Unit 3.2.
-_REPORT_FORMATS = ("json", "md", "sarif")
+# --format values. json+md are the default pair; sarif (Unit 3.1) and the SBOM
+# formats cyclonedx/spdx (Unit 3.2) are opt-in.
+_REPORT_FORMATS = ("json", "md", "sarif", "cyclonedx", "spdx")
 _FAIL_ON_CHOICES = ("none", "verified")
 
 
@@ -515,6 +515,10 @@ def _orchestrate_and_report(
         typer.echo(f"        {paths.report_json}")
     if "sarif" in wanted:
         typer.echo(f"        {paths.report_sarif}")
+    if "cyclonedx" in wanted:
+        typer.echo(f"        {paths.report_cyclonedx}")
+    if "spdx" in wanted:
+        typer.echo(f"        {paths.report_spdx}")
     # --fail-on verified (Unit 1.4): a distinct exit code when a verified finding
     # meets the threshold, so CI can gate on independently-reproduced findings.
     if fail_on == "verified" and verified > 0:
@@ -871,7 +875,7 @@ def scan(
         typer.Option(
             "--format",
             help="Report format(s) to write: 'json' and/or 'md' (default both), and/or 'sarif' "
-            "(SARIF 2.1.0). cyclonedx/spdx are reserved for a later release.",
+            "(SARIF 2.1.0), 'cyclonedx' (CycloneDX 1.6 SBOM), 'spdx' (SPDX 2.3 SBOM).",
         ),
     ] = None,
     output: Annotated[

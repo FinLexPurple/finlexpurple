@@ -28,9 +28,11 @@ from finlexpurple.orchestrator.ulid import ulid_timestamp_ms
 from finlexpurple.reporting.aggregate import summarize
 from finlexpurple.reporting.badge import badge_for
 from finlexpurple.reporting.narrative import Explainer, build_narrative, suggested_fix
-from finlexpurple.reporting.writers.json_writer import render_json, report_document
+from finlexpurple.reporting.writers.cyclonedx_writer import render_cyclonedx
+from finlexpurple.reporting.writers.json_writer import report_document
 from finlexpurple.reporting.writers.markdown_writer import RenderedFinding, render_markdown
 from finlexpurple.reporting.writers.sarif_writer import render_sarif
+from finlexpurple.reporting.writers.spdx_writer import render_spdx
 from finlexpurple.security.secrets import ensure_owner_only
 
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -44,6 +46,8 @@ class ReportPaths:
     report_json: Path
     report_md: Path
     report_sarif: Path
+    report_cyclonedx: Path
+    report_spdx: Path
     evidence_dir: Path
     replay_logs_dir: Path
 
@@ -164,36 +168,33 @@ def write_report(
     report_json = directory / "report.json"
     report_md = directory / "report.md"
     report_sarif = directory / "report.sarif"
+    report_cyclonedx = directory / "report.cyclonedx.json"
+    report_spdx = directory / "report.spdx.json"
     resolved_run_id = run_id or directory.name
     started_at = _started_at(resolved_run_id, stamp).isoformat()
     generated_at = stamp.isoformat()
-    # --format freeze (Unit 1.4 + 3.1): default writes json+md; a subset writes only
-    # those. SARIF (Unit 3.1) transforms the SAME report document the JSON writer emits.
+    # --format freeze (Unit 1.4 + 3.1 + 3.2): default writes json+md; a subset writes
+    # only those. Every machine format (json/sarif/cyclonedx/spdx) is rendered from the
+    # SAME report document, built once here, so the formats can never drift.
     wanted = set(formats) if formats else {"json", "md"}
-    if "json" in wanted:
-        _write_owner_only(
-            report_json,
-            render_json(
-                target=target,
-                run_id=resolved_run_id,
-                started_at=started_at,
-                generated_at=generated_at,
-                summary=summary,
-                findings=findings,
-            ),
+    document: dict | None = None
+    if wanted & {"json", "sarif", "cyclonedx", "spdx"}:
+        document = report_document(
+            target=target,
+            run_id=resolved_run_id,
+            started_at=started_at,
+            generated_at=generated_at,
+            summary=summary,
+            findings=findings,
         )
-    if "sarif" in wanted:
-        _write_owner_only(
-            report_sarif,
-            render_sarif(report_document(
-                target=target,
-                run_id=resolved_run_id,
-                started_at=started_at,
-                generated_at=generated_at,
-                summary=summary,
-                findings=findings,
-            )),
-        )
+    if "json" in wanted and document is not None:
+        _write_owner_only(report_json, json.dumps(document, indent=2, ensure_ascii=True, sort_keys=True) + "\n")
+    if "sarif" in wanted and document is not None:
+        _write_owner_only(report_sarif, render_sarif(document))
+    if "cyclonedx" in wanted and document is not None:
+        _write_owner_only(report_cyclonedx, render_cyclonedx(document))
+    if "spdx" in wanted and document is not None:
+        _write_owner_only(report_spdx, render_spdx(document))
     if "md" in wanted:
         _write_owner_only(
             report_md,
@@ -206,6 +207,8 @@ def write_report(
         report_json=report_json,
         report_md=report_md,
         report_sarif=report_sarif,
+        report_cyclonedx=report_cyclonedx,
+        report_spdx=report_spdx,
         evidence_dir=evidence_dir,
         replay_logs_dir=replay_logs_dir,
     )
