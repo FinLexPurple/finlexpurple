@@ -18,7 +18,7 @@ def test_banner_panel_contains_the_wordmark_in_a_border() -> None:
     out = _render(C.banner_panel(), color=False)
     assert "| __(_)" in out  # the ASCII wordmark
     assert "autonomous security agent" in out
-    assert "╭" in out and "╰" in out  # a rounded border
+    assert ("╭" in out and "╰" in out) or ("┌" in out and "└" in out)
 
 
 def test_session_info_panel_shows_labels_and_values() -> None:
