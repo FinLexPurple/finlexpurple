@@ -84,8 +84,9 @@ agents_app = typer.Typer(help="List and inspect the named security agents.", no_
 #   0 = clean · 1 = tool/runtime error · 2 = usage/argument error ·
 #   3 = --fail-on threshold matched (e.g. a VERIFIED finding).
 _EXIT_VERIFIED_THRESHOLD = 3
-# Reserved --format values now (sarif/cyclonedx/spdx arrive in Phase 3).
-_REPORT_FORMATS = ("json", "md")
+# --format values. json+md are the default pair; sarif (Unit 3.1) is opt-in.
+# cyclonedx/spdx arrive in Unit 3.2.
+_REPORT_FORMATS = ("json", "md", "sarif")
 _FAIL_ON_CHOICES = ("none", "verified")
 
 
@@ -512,6 +513,8 @@ def _orchestrate_and_report(
         typer.echo(f"Report: {paths.report_md}")
     if "json" in wanted:
         typer.echo(f"        {paths.report_json}")
+    if "sarif" in wanted:
+        typer.echo(f"        {paths.report_sarif}")
     # --fail-on verified (Unit 1.4): a distinct exit code when a verified finding
     # meets the threshold, so CI can gate on independently-reproduced findings.
     if fail_on == "verified" and verified > 0:
@@ -867,8 +870,8 @@ def scan(
         list[str] | None,
         typer.Option(
             "--format",
-            help="Report format(s) to write: 'json' and/or 'md' (default both). "
-            "sarif/cyclonedx/spdx are reserved for a later release.",
+            help="Report format(s) to write: 'json' and/or 'md' (default both), and/or 'sarif' "
+            "(SARIF 2.1.0). cyclonedx/spdx are reserved for a later release.",
         ),
     ] = None,
     output: Annotated[
