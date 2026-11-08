@@ -61,6 +61,43 @@ def _finding_document(finding: Finding) -> dict[str, Any]:
     return doc
 
 
+def report_document(
+    *,
+    target: str,
+    run_id: str,
+    started_at: str,
+    generated_at: str,
+    summary: ReportSummary,
+    findings: Sequence[Finding],
+    tool_version: str | None = None,
+) -> dict[str, Any]:
+    """Build the full, schema_version-stamped report as a plain dict.
+
+    This is the **single source of truth** for ``report.json``'s content: the JSON
+    writer serializes exactly this dict, and other emitters (e.g. the SARIF writer,
+    Unit 3.1) transform exactly this dict, so they can never drift from the report.
+    ``rules`` carries only the catalog records actually used in this report, keyed by
+    ``rule_id``, and each finding doc carries its ``rule_id`` and structured location.
+    """
+
+    used_rules = {}
+    for finding in findings:
+        record = rule_record(finding.vulnerability_class)
+        used_rules[record.rule_id] = record.to_dict()
+
+    return {
+        "schema_version": REPORT_SCHEMA_VERSION,
+        "tool": {"name": "finlexpurple", "version": tool_version or __version__},
+        "run_id": run_id,
+        "target": _target_descriptor(target),
+        "started_at": started_at,
+        "generated_at": generated_at,
+        "summary": summary.to_dict(),
+        "rules": used_rules,
+        "findings": [_finding_document(finding) for finding in findings],
+    }
+
+
 def render_json(
     *,
     target: str,
@@ -73,20 +110,13 @@ def render_json(
 ) -> str:
     """Render the full, schema_version-stamped report as indented JSON text."""
 
-    used_rules = {}
-    for finding in findings:
-        record = rule_record(finding.vulnerability_class)
-        used_rules[record.rule_id] = record.to_dict()
-
-    document = {
-        "schema_version": REPORT_SCHEMA_VERSION,
-        "tool": {"name": "finlexpurple", "version": tool_version or __version__},
-        "run_id": run_id,
-        "target": _target_descriptor(target),
-        "started_at": started_at,
-        "generated_at": generated_at,
-        "summary": summary.to_dict(),
-        "rules": used_rules,
-        "findings": [_finding_document(finding) for finding in findings],
-    }
+    document = report_document(
+        target=target,
+        run_id=run_id,
+        started_at=started_at,
+        generated_at=generated_at,
+        summary=summary,
+        findings=findings,
+        tool_version=tool_version,
+    )
     return json.dumps(document, indent=2, ensure_ascii=True, sort_keys=True) + "\n"

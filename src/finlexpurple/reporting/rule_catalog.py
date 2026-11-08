@@ -93,6 +93,11 @@ RULE_CATALOG: dict[str, RuleRecord] = {
         # financial
         _rule("price_tampering", "Price tampering", "A client-supplied price/amount is trusted at checkout.", Severity.CRITICAL, "financial"),
         _rule("webhook_bypass", "Payment webhook bypass", "An unsigned/forged settlement callback is accepted as paid.", Severity.CRITICAL, "financial"),
+        _rule("order_idor", "Order IDOR", "An order is addressable by id across accounts with no per-user authorization.", Severity.HIGH, "financial"),
+        _rule("coupon_abuse", "Coupon abuse", "A client-supplied coupon the shop never issued is trusted and discounts the order.", Severity.HIGH, "financial"),
+        _rule("payment_status_trust", "Payment-status trust", "A client-set order status is persisted as paid without any settlement.", Severity.CRITICAL, "financial"),
+        _rule("refund_abuse", "Refund abuse", "A refund endpoint trusts a client amount with no amount/idempotency check, allowing an over-refund.", Severity.CRITICAL, "financial"),
+        _rule("race_condition", "Race condition (double-processing)", "A check-then-act endpoint with no lock/idempotency can double-process under concurrency.", Severity.HIGH, "financial"),
     )
 }
 
