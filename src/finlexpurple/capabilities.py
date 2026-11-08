@@ -57,6 +57,7 @@ from finlexpurple.verifier.replay import (
     order_idor_replay,
     payment_status_trust_replay,
     price_tampering_replay,
+    race_condition_replay,
     refund_abuse_replay,
     sqli_replay,
     ssrf_replay,
@@ -67,6 +68,7 @@ from finlexpurple.verifier.replay.canary import OutOfBandCanary
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.race_condition_replay import RaceConfirmer
 from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 from finlexpurple.verifier.replay.xss_replay import BrowserRunner
@@ -108,6 +110,7 @@ class ReplayContext:
     coupon_confirmer: CouponConfirmer | None = None
     payment_status_confirmer: PaymentStatusConfirmer | None = None
     refund_confirmer: RefundConfirmer | None = None
+    race_confirmer: RaceConfirmer | None = None
 
 
 WebDetector = Callable[[Endpoint, Prober], list[Finding]]
@@ -202,6 +205,10 @@ def _payment_status_trust_replay(finding: Finding, ctx: ReplayContext) -> Replay
 
 def _refund_abuse_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
     return refund_abuse_replay.replay(finding, ctx.prober, ctx.gate, ctx.refund_confirmer)
+
+
+def _race_condition_replay(finding: Finding, ctx: ReplayContext) -> ReplayResult:
+    return race_condition_replay.replay(finding, ctx.prober, ctx.gate, ctx.race_confirmer)
 
 
 # --- The registry -------------------------------------------------------------
@@ -362,6 +369,22 @@ _CAPABILITIES: tuple[Capability, ...] = (
         required_collaborators=frozenset({PROBER, GATE}),
         gate_category=DERIVE_FROM_AGENT,
         evidence_shape="over_refund_readback",
+        agent=None,
+    ),
+    # Race condition (Unit 2.5): a check-then-act endpoint with no idempotency key or
+    # lock. Verification is a BOUNDED, gated concurrency harness — never uncontrolled
+    # concurrency — and it is reproduced only if an in-scope read-back shows the
+    # operation durably double-processed THIS run. A genuine race is non-deterministic,
+    # so the honest outcome is usually INCONCLUSIVE (a human-review lead), not VERIFIED.
+    Capability(
+        vulnerability_class="race_condition",
+        family="financial",
+        detector=None,
+        relevance=None,
+        replay=_race_condition_replay,
+        required_collaborators=frozenset({PROBER, GATE}),
+        gate_category=DERIVE_FROM_AGENT,
+        evidence_shape="double_processing_readback",
         agent=None,
     ),
 )
