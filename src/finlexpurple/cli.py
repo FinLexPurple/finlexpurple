@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 from urllib.parse import urlsplit
 
 import typer
@@ -112,7 +112,9 @@ def root_callback(
     # The banner is cosmetic: machine-readable modes and an explicit opt-out
     # suppress it, and branding.py itself prints only to an interactive stderr.
     suppressed = no_banner or json_logs
-    ctx.obj = {"no_banner": suppressed}
+    # Keep ``json_logs`` distinct from ``no_banner`` so the interactive ``chat`` command
+    # can refuse machine-log mode while still honoring a plain ``--no-banner``.
+    ctx.obj = {"no_banner": suppressed, "json_logs": json_logs}
     if version:
         from finlexpurple.release import version_line
 
@@ -122,6 +124,109 @@ def root_callback(
     if ctx.invoked_subcommand is None:
         branding.print_banner(suppressed=suppressed)
         typer.echo(ctx.get_help())
+
+
+_CHAT_SYSTEM_PROMPT = (
+    "You are FinLexPurple, a local, hardened, autonomous security-testing agent running "
+    "in an interactive terminal. Be concise and honest. A finding is only VERIFIED when a "
+    "deterministic replay reproduces it — never claim otherwise. State-changing actions are "
+    "gated and some categories are non-overridable; never imply you can bypass a gate or a "
+    "spend/egress cap."
+)
+
+
+def _chat_session_info(target: str | None) -> Any:
+    """Build the chat session-info header from the validated config (best-effort)."""
+
+    from finlexpurple.config import Config, ConfigurationError
+    from finlexpurple.tui.components import SessionInfo
+
+    provider: str | None = None
+    model: str | None = None
+    try:
+        config = Config.load()
+        provider = config.llm_provider.value
+        model = getattr(config, f"{provider}_model", None)
+    except (ConfigurationError, ValueError):
+        pass  # the header just omits provider/model when config is unavailable
+    return SessionInfo(target=target, mode="chat", provider=provider, model=model)
+
+
+def _chat_turn_handler() -> Any:
+    """Build the Phase-2 conversational turn handler over the configured provider.
+
+    If no provider is configured the handler degrades to a clear setup hint rather than
+    crashing, so the session screen is still usable.
+    """
+
+    from finlexpurple.providers.base import Message, ProviderError
+    from finlexpurple.providers.factory import create_provider
+
+    try:
+        provider = create_provider()
+    except ProviderError as exc:
+        reason = str(exc)
+
+        def degraded(line: str, history: list[Any]) -> str:
+            del line, history
+            return (
+                f"No model provider is configured — {reason}\n\n"
+                "Run `finlexpurple setup` to choose a provider and model, then start "
+                "`chat` again."
+            )
+
+        return degraded
+
+    def handle(line: str, history: list[Any]) -> str:
+        messages = [
+            Message(role="system", content=_CHAT_SYSTEM_PROMPT),
+            *history,
+            Message(role="user", content=line),
+        ]
+        try:
+            return provider.complete(messages).content
+        except ProviderError as exc:
+            return f"**Provider error:** {exc}"
+
+    return handle
+
+
+@app.command()
+def chat(
+    ctx: typer.Context,
+    target: Annotated[
+        str | None,
+        typer.Option("--target", help="Optional target URL to show in the session header."),
+    ] = None,
+) -> None:
+    """Start an interactive chat session with the FinLexPurple agent.
+
+    A linear, scrollback-preserving terminal conversation. Interactive only: it refuses
+    ``--json-logs`` and a non-TTY stdin/stdout so it can never corrupt a pipe.
+    """
+
+    if (ctx.obj or {}).get("json_logs"):
+        typer.echo("chat is interactive and is not available with --json-logs.", err=True)
+        raise typer.Exit(code=2)
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
+        typer.echo("chat requires an interactive terminal (a TTY on stdin and stdout).", err=True)
+        raise typer.Exit(code=2)
+
+    from prompt_toolkit import PromptSession
+
+    from finlexpurple.tui import palette
+    from finlexpurple.tui.chat import run_chat
+    from finlexpurple.tui.theme import make_console
+
+    console = make_console()
+    code = run_chat(
+        console=console,
+        handler=_chat_turn_handler(),
+        info=_chat_session_info(target),
+        session=PromptSession(),
+        color=palette.use_color(sys.stdout),
+    )
+    raise typer.Exit(code=code)
 
 
 def _load_and_validate_resume(state_path: Path) -> tuple[RunState, Target]:
