@@ -127,11 +127,15 @@ def root_callback(
 
 
 _CHAT_SYSTEM_PROMPT = (
-    "You are FinLexPurple, a local, hardened, autonomous security-testing agent running "
-    "in an interactive terminal. Be concise and honest. A finding is only VERIFIED when a "
+    "You are FinLexPurple, a local, hardened, autonomous security-testing agent running in "
+    "an interactive terminal. Be concise and honest. A finding is only VERIFIED when a "
     "deterministic replay reproduces it — never claim otherwise. State-changing actions are "
     "gated and some categories are non-overridable; never imply you can bypass a gate or a "
-    "spend/egress cap."
+    "spend/egress cap.\n\n"
+    "Each step, respond with a decision: set action to \"list_agents\" to look up the named "
+    "agent roster when that helps answer, otherwise set action to \"reply\" and put your "
+    "answer to the user in message. Only use the operations offered to you; never claim to "
+    "run one that is not available."
 )
 
 
@@ -152,15 +156,17 @@ def _chat_session_info(target: str | None) -> Any:
     return SessionInfo(target=target, mode="chat", provider=provider, model=model)
 
 
-def _chat_turn_handler() -> Any:
-    """Build the Phase-2 conversational turn handler over the configured provider.
+def _chat_turn_handler(console: Any) -> Any:
+    """Build the chat turn handler: the autonomous dispatcher over the configured provider.
 
-    If no provider is configured the handler degrades to a clear setup hint rather than
-    crashing, so the session screen is still usable.
+    The dispatcher lets the agent decide which registered (already-gated) operation to run
+    and renders its activity into ``console``. If no provider is configured the handler
+    degrades to a clear setup hint rather than crashing, so the session screen stays usable.
     """
 
-    from finlexpurple.providers.base import Message, ProviderError
+    from finlexpurple.providers.base import ProviderError
     from finlexpurple.providers.factory import create_provider
+    from finlexpurple.tui.dispatch import dispatch_turn
 
     try:
         provider = create_provider()
@@ -178,15 +184,13 @@ def _chat_turn_handler() -> Any:
         return degraded
 
     def handle(line: str, history: list[Any]) -> str:
-        messages = [
-            Message(role="system", content=_CHAT_SYSTEM_PROMPT),
-            *history,
-            Message(role="user", content=line),
-        ]
-        try:
-            return provider.complete(messages).content
-        except ProviderError as exc:
-            return f"**Provider error:** {exc}"
+        return dispatch_turn(
+            provider=provider,
+            console=console,
+            system_prompt=_CHAT_SYSTEM_PROMPT,
+            user_input=line,
+            history=history,
+        )
 
     return handle
 
@@ -221,7 +225,7 @@ def chat(
     console = make_console()
     code = run_chat(
         console=console,
-        handler=_chat_turn_handler(),
+        handler=_chat_turn_handler(console),
         info=_chat_session_info(target),
         session=PromptSession(),
         color=palette.use_color(sys.stdout),
