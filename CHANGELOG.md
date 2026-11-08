@@ -5,6 +5,58 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0b1] - 2026-11-08
+
+First **0.4.0 beta** (codename *Pivot*). Adds the gated financial verification
+classes (Phase 2) and the machine-readable report emitters (Phase 3). Published
+to **TestPyPI only**; the PyPI Trusted Publisher stays configured and pending for
+the eventual stable `0.4.0`. Verify the release's PEP 740 attestations as
+described in [docs/releases/0.4.0b1.md](docs/releases/0.4.0b1.md).
+
+### Added
+
+- **Financial verification classes** (Phase 2) — each a gated, replay-backed
+  check on the one capability contract, verified only by an in-scope read-back,
+  never an LLM:
+  - **Order IDOR** (2.1) — a two-session cross-account order read; reproduced
+    when the non-owner receives the owner's exact object.
+  - **Coupon abuse** (2.2) — a client-supplied coupon the shop never issued;
+    reproduced when a read-back shows the illegitimate discount durably applied.
+  - **Payment-status trust** (2.3) — a client-set order status persisted without
+    settlement; reproduced when a read-back shows the order durably marked.
+  - **Refund abuse** (2.4) — an over-refund with no amount/idempotency check; the
+    gated re-send is the double-refund corollary; reproduced when the refunded
+    total durably exceeds the amount paid.
+  - **Race condition** (2.5) — a check-then-act double-processing opportunity,
+    verified by a **bounded, rate-limited, gated** concurrency harness. Marked
+    `VERIFIED` only on a deterministic in-scope double-processing read-back;
+    otherwise an honest `INCONCLUSIVE` human-review lead (never a forced verdict,
+    never evidence the race is absent).
+- **SARIF 2.1.0 report writer** (Phase 3, Unit 3.1) — `--format sarif`. `ruleId`
+  from the rule catalog, `level` from the frozen severity map, the versioned
+  fingerprint under `partialFingerprints`; a `physicalLocation` only when a real
+  source file exists, else a `logicalLocation` (the GitHub code-scanning display
+  caveat is documented, never worked around).
+- **CycloneDX 1.6 and SPDX 2.3 SBOM writers** (Phase 3, Unit 3.2) —
+  `--format cyclonedx` / `--format spdx`. Components/packages are built from the
+  frozen package URLs; CycloneDX emits a VEX entry (`analysis.state=exploitable`)
+  for verified, purl-bearing findings. Empty when the report carries no purls —
+  emitted truthfully, never fabricated.
+
+### Changed
+
+- The rule catalog now carries every Phase-2 financial class, so every emitter's
+  rule metadata is complete.
+- All machine report formats (`json`, `sarif`, `cyclonedx`, `spdx`) render from a
+  single shared report document, so they cannot drift from one another.
+
+### Security
+
+- Report formats validate offline against vendored official JSON Schemas (SARIF
+  2.1.0, CycloneDX 1.6, SPDX 2.3); the air-gapped tool never fetches at runtime.
+- Release workflow actions are pinned to commit SHAs; publishing keeps PEP 740
+  Sigstore attestations via Trusted Publishing, with no stored API tokens.
+
 ## [0.3.0] - 2026-10-22
 
 Milestone M3 (Phases 11–16). This milestone adds deterministic verification and
