@@ -82,10 +82,15 @@ def _print_help(console: Console) -> None:
 
 
 def _render_turn(console: Console, handler: TurnHandler, line: str, history: list[Message]) -> None:
-    """Handle one user turn: thinking status -> reply rendered as markdown into scrollback."""
+    """Handle one user turn: the handler owns in-turn progress (its activity stream), then
+    the reply is rendered as markdown into the scrollback.
 
-    with console.status("[flp.muted]thinking…[/]", spinner="dots"):
-        reply = handler(line, list(history))
+    The handler is NOT wrapped in a status spinner here: a handler that shows a live
+    activity stream (the autonomous dispatcher) owns the single live region for the turn,
+    and rich permits only one live display at a time.
+    """
+
+    reply = handler(line, list(history))
     history.append(Message(role="user", content=line))
     history.append(Message(role="assistant", content=reply))
     console.print()
