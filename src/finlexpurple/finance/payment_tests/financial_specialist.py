@@ -25,6 +25,7 @@ from finlexpurple.finance.payment_tests import (
     coupon_abuse,
     payment_status_trust,
     price_tampering,
+    race_condition,
     refund_abuse,
     webhook_bypass,
 )
@@ -34,6 +35,7 @@ from finlexpurple.verifier import engine as verifier_engine
 from finlexpurple.verifier.replay.coupon_abuse_replay import CouponConfirmer
 from finlexpurple.verifier.replay.payment_status_trust_replay import PaymentStatusConfirmer
 from finlexpurple.verifier.replay.price_tampering_replay import ChargeConfirmer
+from finlexpurple.verifier.replay.race_condition_replay import RaceConfirmer
 from finlexpurple.verifier.replay.refund_abuse_replay import RefundConfirmer
 from finlexpurple.verifier.replay.webhook_bypass_replay import SettlementConfirmer
 
@@ -45,6 +47,7 @@ REPLAY_BACKED_CLASSES = (
     "coupon_abuse",
     "payment_status_trust",
     "refund_abuse",
+    "race_condition",
 )
 
 _PROCEED = (GateOutcome.ALLOWED, GateOutcome.APPROVED)
@@ -71,6 +74,7 @@ def capture_and_verify(
     coupon_confirmer: CouponConfirmer | None = None,
     payment_status_confirmer: PaymentStatusConfirmer | None = None,
     refund_confirmer: RefundConfirmer | None = None,
+    race_confirmer: RaceConfirmer | None = None,
 ) -> list[Finding]:
     """Gate -> active capture -> deterministic verify for the replay-backed classes on one endpoint.
 
@@ -165,5 +169,26 @@ def capture_and_verify(
         else:
             refund_findings = refund_abuse.check([endpoint], agent=agent)
         findings.extend(refund_findings)
+
+    # Race condition: only check-then-act (single-use redeem / store-credit) endpoints.
+    # The capture is structural (it never sends — that would consume the single-use
+    # resource); the state change is the gated concurrency replay, so gate before it
+    # can run. The replay is a BOUNDED, rate-limited concurrent burst — never
+    # uncontrolled concurrency — and stays INCONCLUSIVE unless an in-scope read-back
+    # deterministically shows double-processing this run.
+    if race_condition.looks_like_race(endpoint):
+        if prober is not None and _may_proceed(
+            gate,
+            description=f"race-condition test (bounded gated concurrent burst) against {endpoint.url}",
+            category=agent,
+        ):
+            race_findings = race_condition.check([endpoint], agent=agent, prober=prober)
+            for finding in race_findings:
+                verifier_engine.verify(
+                    finding, prober=prober, gate=gate, race_confirmer=race_confirmer
+                )
+        else:
+            race_findings = race_condition.check([endpoint], agent=agent)
+        findings.extend(race_findings)
 
     return findings

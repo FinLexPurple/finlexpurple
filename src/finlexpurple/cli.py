@@ -436,6 +436,7 @@ def _orchestrate_and_report(
         _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
         _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
         _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
+        _race_confirmer = _race_confirmer_for(prober, order_status_url)
 
         executor = Executor(
             {"phase8_stub": WebDetector(
@@ -444,6 +445,7 @@ def _orchestrate_and_report(
                 settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
                 payment_status_confirmer=_payment_status_confirmer,
                 refund_confirmer=_refund_confirmer,
+                race_confirmer=_race_confirmer,
                 run_financial=run_financial,
             )}
         )
@@ -762,6 +764,51 @@ def _refund_confirmer_for(
             return float(refunded_match.group(1)) > float(paid_match.group(1))
         except ValueError:  # non-numeric durable state -> unconfirmable
             return None
+
+    return confirm
+
+
+# Machine-readable token the race oracle exposes: the number of times the single-use
+# operation was durably applied. The tool parses it and owns the double-processing
+# verdict (applied >= 2) itself — it never trusts a lab-computed flag.
+_RACE_APPLIED_RE = re.compile(r'data-race-applied="([0-9]+)"')
+
+
+def _race_confirmer_for(
+    prober: HttpProber, order_status_url: str | None
+) -> Callable[[Finding, int], bool | None]:
+    """Build the double-processing read-back from the same operator-provided order oracle.
+
+    The race's durable effect — was the single-use operation applied more than once? —
+    is read from the SAME order-status oracle (``--order-status-url``), pointed at the
+    dedicated voucher order id. Without an oracle URL a real read-back is impossible, so
+    it returns ``None`` and the finding stays INCONCLUSIVE — never VERIFIED without a
+    genuine read. With one, it substitutes the voucher order id for a literal
+    ``{order_id}`` placeholder, GETs that URL through the egress-checked prober (in-scope
+    only), parses the durable ``applied`` count, and returns ``True`` only when
+    ``applied >= 2`` (a durable double-processing), ``False`` when the read succeeds and
+    it does not, and ``None`` when it cannot read or parse it. The tool, not the lab,
+    owns the comparison; a double-processing signal is never synthesized, and a genuine
+    race that applied once this run honestly returns ``False`` -> INCONCLUSIVE.
+    """
+
+    from finlexpurple.finance.payment_tests import race_condition
+
+    def confirm(finding: Finding, accepted: int) -> bool | None:
+        del finding, accepted  # the verdict reads durable applied-count, not the burst's accept count
+        if not order_status_url:
+            return None
+        url = order_status_url.replace("{order_id}", race_condition.RACE_ORDER_ID)
+        try:
+            text = prober.request("GET", url).text
+        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
+            return None
+        if race_condition.RACE_ORDER_ID not in text:
+            return None
+        applied_match = _RACE_APPLIED_RE.search(text)
+        if applied_match is None:
+            return None
+        return int(applied_match.group(1)) >= 2
 
     return confirm
 
@@ -1310,6 +1357,7 @@ def run_agent(
     _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
     _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
     _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
+    _race_confirmer = _race_confirmer_for(prober, order_status_url)
 
     # Order-IDOR identities (optional); a malformed config file is a usage error.
     try:
@@ -1322,7 +1370,7 @@ def run_agent(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
         charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
         coupon_confirmer=_coupon_confirmer, payment_status_confirmer=_payment_status_confirmer,
-        refund_confirmer=_refund_confirmer,
+        refund_confirmer=_refund_confirmer, race_confirmer=_race_confirmer,
         idor_identities=idor_identities,
     )
     try:

@@ -228,6 +228,51 @@ def refund_finding(
     )
 
 
+def race_finding(
+    endpoint: Endpoint,
+    *,
+    descriptor: str,
+    severity: Severity,
+    agent: str,
+) -> Finding:
+    """Build a ``reported`` race_condition finding carrying a re-sendable check-then-act request.
+
+    The race case is different from the other financial captures: capture is
+    **structural**, not active. It records the concrete request (``method`` + ``url``)
+    of an endpoint with a check-then-act window and **no** idempotency key or lock,
+    but it deliberately does **not** send it — exercising the operation here would
+    consume a single-use resource (e.g. redeem the voucher) and defeat the race the
+    gated replay must then run. ``payload`` is a stable descriptor of the opportunity
+    (so the deterministic ``finding_id`` is stable per endpoint); the re-sendable
+    request is the finding's ``method``/``url``.
+
+    ``expected_signal`` states, in a code-checkable way, the criterion the replay
+    will test: a **bounded, gated, rate-limited** concurrent burst plus an in-scope
+    read-back show the operation durably applied **more than once** (double-processing)
+    **this run**. A genuine race is non-deterministic, so anything short of a confirmed
+    double-processing this run is an **inconclusive human-review lead**, never a clean
+    negative and never auto-VERIFIED. Capture never verifies — the status stays
+    ``reported`` here.
+    """
+
+    return Finding.new(
+        vulnerability_class="race_condition",
+        method=endpoint.method,
+        url=endpoint.url,
+        payload=f"race_condition:{descriptor}",
+        headers={},
+        body=None,
+        expected_signal=(
+            "endpoint has a check-then-act window with no idempotency key or lock; reproduced only "
+            "if a bounded, gated concurrent burst and an in-scope read-back show the operation durably "
+            "applied more than once (double-processing) this run — otherwise an inconclusive "
+            "human-review lead, never evidence the race is absent"
+        ),
+        severity=severity,
+        agent=agent,
+    )
+
+
 def forged_callback_finding(
     endpoint: Endpoint,
     *,
