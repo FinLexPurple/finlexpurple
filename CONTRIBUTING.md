@@ -52,7 +52,27 @@ behavior change — a test committed alongside the code it covers.
 Please do not open a public issue for a vulnerability in FinLexPurple itself.
 Report it privately to the maintainers first.
 
+## Developer Certificate of Origin (sign-off)
+
+Contributions are accepted under the [Developer Certificate of Origin](DCO) (DCO
+1.1) — a lightweight statement that you have the right to submit the code you're
+contributing. We use the DCO instead of a CLA.
+
+To certify it, **sign off every commit**: add a `Signed-off-by` line with your real
+name and email, which `git` adds for you with the `-s` flag:
+
+```bash
+git commit -s -m "your message"
+# ->  Signed-off-by: Your Name <you@example.com>
+```
+
+The name and email must be real and match your `git config user.name` / `user.email`.
+By signing off you certify the statements in the [DCO](DCO) file for that contribution.
+A pull request whose commits are not signed off will be asked to add the sign-off (you
+can amend with `git commit --amend -s` or rebase with `git rebase --signoff`).
+
 ## License
 
 By contributing you agree your contributions are licensed under the Apache
-License 2.0, the same as the project.
+License 2.0, the same as the project. The license covers the code; the
+FinLexPurple name and logo are trademarks — see the [trademark policy](TRADEMARKS.md).
