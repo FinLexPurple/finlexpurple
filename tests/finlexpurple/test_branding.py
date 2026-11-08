@@ -52,10 +52,21 @@ def test_no_color_env_disables_color_but_still_prints(monkeypatch) -> None:
 
 def test_color_used_on_tty_without_no_color(monkeypatch) -> None:
     monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.delenv("COLORTERM", raising=False)  # force the basic-16 path, deterministically
     out = _FakeStream(tty=True)
     assert branding.use_color(out) is True
     branding.print_brand_line(out)
-    assert "\033[35m" in out.getvalue()  # purple
+    value = out.getvalue()
+    assert "\033[36m" in value  # brand teal (cyan in basic-16), not the old magenta
+    assert "\033[35m" not in value  # the off-brand purple is gone
+
+
+def test_truecolor_brand_line_uses_exact_teal(monkeypatch) -> None:
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    out = _FakeStream(tty=True)
+    branding.print_brand_line(out)
+    assert "\033[38;2;45;212;191m" in out.getvalue()  # exact --teal #2DD4BF, 24-bit
 
 
 def test_wordmark_is_pure_ascii_for_legacy_consoles() -> None:
