@@ -59,6 +59,9 @@ dev = [
     "ruff>=0.5",
     "mypy>=1.10",
     "jsonschema>=4",
+    # TOML reader for the release-pipeline guard test on the minimum supported
+    # Python; `tomllib` is stdlib only from 3.11, so 3.10 needs the backport.
+    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.scripts]
