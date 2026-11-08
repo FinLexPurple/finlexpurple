@@ -19,9 +19,15 @@ invocation and ``--help``, and a compact one-line brand at the start of a
 
 from __future__ import annotations
 
-import os
 import sys
 from typing import TextIO
+
+from finlexpurple.tui import palette
+from finlexpurple.tui.palette import use_color
+
+# ``use_color`` lives in the palette (single source of truth) and is re-exported here
+# for callers and tests that reach for ``branding.use_color``.
+__all__ = ["print_banner", "print_brand_line", "use_color"]
 
 # Pure-ASCII wordmark (no box-drawing or emoji), so it encodes on every console.
 _WORDMARK = r"""
@@ -35,26 +41,12 @@ _WORDMARK = r"""
 _TAGLINE = "local - hardened - autonomous security agent"
 _BRAND_LINE = "FinLexPurple - local, hardened autonomous security agent"
 
-# ANSI: magenta/purple for the wordmark, dim for the tagline.
-_PURPLE = "\033[35m"
-_DIM = "\033[2m"
-_RESET = "\033[0m"
-
-
 def _is_tty(stream: TextIO) -> bool:
     try:
         return bool(stream.isatty())
     except (AttributeError, ValueError, OSError):
         # No isatty (unusual stream), or a closed/detached stream: treat as non-TTY.
         return False
-
-
-def use_color(stream: TextIO) -> bool:
-    """Color only on a real TTY, and never when NO_COLOR is set (any value)."""
-
-    if "NO_COLOR" in os.environ:
-        return False
-    return _is_tty(stream)
 
 
 def _should_show(stream: TextIO, *, suppressed: bool) -> bool:
@@ -72,11 +64,11 @@ def print_banner(stream: TextIO | None = None, *, suppressed: bool = False) -> b
     out = stream if stream is not None else sys.stderr
     if not _should_show(out, suppressed=suppressed):
         return False
-    if use_color(out):
-        body = f"{_PURPLE}{_WORDMARK.rstrip()}{_RESET}\n {_DIM}{_TAGLINE}{_RESET}\n"
-    else:
-        body = f"{_WORDMARK.rstrip()}\n {_TAGLINE}\n"
-    out.write(body + "\n")
+    # Brand wordmark in teal (primary), tagline muted/dim. palette.paint no-ops when
+    # color is off, so the plain form falls out of the same call.
+    wordmark = palette.paint(_WORDMARK.rstrip(), "primary", stream=out)
+    tagline = palette.paint(_TAGLINE, "muted", stream=out, dim=True)
+    out.write(f"{wordmark}\n {tagline}\n\n")
     out.flush()
     return True
 
@@ -90,9 +82,9 @@ def print_brand_line(stream: TextIO | None = None, *, suppressed: bool = False) 
     out = stream if stream is not None else sys.stderr
     if not _should_show(out, suppressed=suppressed):
         return False
-    if use_color(out):
-        out.write(f"{_PURPLE}FinLexPurple{_RESET} - local, hardened autonomous security agent\n")
-    else:
-        out.write(_BRAND_LINE + "\n")
+    # "FinLexPurple" in teal (primary, bold); the rest plain. palette.paint no-ops
+    # when color is off, yielding exactly the plain _BRAND_LINE.
+    name = palette.paint("FinLexPurple", "primary", stream=out, bold=True)
+    out.write(f"{name} - local, hardened autonomous security agent\n")
     out.flush()
     return True
