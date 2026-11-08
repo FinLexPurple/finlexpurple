@@ -43,9 +43,17 @@ jobs:
           python -m pip install -e .
           python -m pip install "pip-audit>=2.7"
       - name: Audit our own dependencies for known vulnerabilities
-        # Audits this environment (our runtime dependencies) against the PyPI
-        # advisory database. A known-vulnerable dependency fails the build.
-        run: python -m pip_audit --strict --progress-spinner off
+        # Audits our runtime dependencies against the PyPI advisory database; a
+        # known-vulnerable dependency fails the build. We audit a frozen list of the
+        # non-editable installs rather than the environment, so our own editable
+        # self-install is excluded cleanly: it is the package under development, not
+        # a dependency, and is not on PyPI before release, so auditing it would fail
+        # with "not found on PyPI" for every unpublished version. (--skip-editable
+        # alone does not help here: under --strict the skipped editable is itself a
+        # collection failure.) --strict still applies to every real dependency.
+        run: |
+          python -m pip freeze --exclude-editable > audit-requirements.txt
+          python -m pip_audit --strict -r audit-requirements.txt --progress-spinner off
       - name: Dependency-confusion namespace guard
         # Fails if anything in the finlexpurple namespace is installed that we do
         # not publish, or that lacks our first-party provenance.

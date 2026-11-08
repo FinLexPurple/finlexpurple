@@ -12,7 +12,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-import tomllib
+try:  # `tomllib` is stdlib from Python 3.11; 3.10 (our minimum) uses the tomli backport.
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised only on Python 3.10
+    import tomli as tomllib
 
 import finlexpurple
 
@@ -33,7 +36,7 @@ def _pyproject_version() -> str:
 def test_version_is_consistent_across_pyproject_init_and_is_the_beta() -> None:
     version = _pyproject_version()
     assert version == finlexpurple.__version__  # the tagged commit is self-consistent
-    assert version == "0.4.0b1"
+    assert version == "0.4.0b2"
 
 
 def test_changelog_has_a_section_for_the_current_version() -> None:

@@ -5,13 +5,17 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.4.0b1] - 2026-11-08
+## [0.4.0b2] - 2026-11-08
 
 First **0.4.0 beta** (codename *Pivot*). Adds the gated financial verification
 classes (Phase 2) and the machine-readable report emitters (Phase 3). Published
 to **TestPyPI only**; the PyPI Trusted Publisher stays configured and pending for
 the eventual stable `0.4.0`. Verify the release's PEP 740 attestations as
-described in [docs/releases/0.4.0b1.md](docs/releases/0.4.0b1.md).
+described in [docs/releases/0.4.0b2.md](docs/releases/0.4.0b2.md).
+
+Supersedes the unpublished `0.4.0b1` tag, whose release workflow failed its quality
+gate before building or publishing anything; this beta fixes the two causes (see
+**Fixed**).
 
 ### Added
 
@@ -49,6 +53,19 @@ described in [docs/releases/0.4.0b1.md](docs/releases/0.4.0b1.md).
   rule metadata is complete.
 - All machine report formats (`json`, `sarif`, `cyclonedx`, `spdx`) render from a
   single shared report document, so they cannot drift from one another.
+
+### Fixed
+
+- **Release CI on Python 3.10** — the release-pipeline guard test read
+  `pyproject.toml` with `tomllib`, which is standard-library only from Python 3.11;
+  the quality jobs run on 3.10 (the minimum supported version), so it failed to
+  import. It now falls back to the `tomli` backport (added as a `python_version <
+  "3.11"` dev dependency).
+- **Self-audit of the unpublished package** — the supply-chain audit job ran
+  `pip-audit --strict` over the whole environment, including our own editable
+  install, and failed because the pre-release version is not yet on PyPI. It now
+  audits a frozen list of the non-editable dependencies, excluding our own package
+  while keeping `--strict` over every real dependency.
 
 ### Security
 
