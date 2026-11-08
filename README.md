@@ -168,7 +168,10 @@ output into one finding schema — it does not reimplement their databases.
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Issues and pull requests welcome.
+Contributions are accepted under the [Developer Certificate of Origin](DCO) — sign
+off your commits with `git commit -s`.
 
-## License
+## License and trademarks
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE). The license covers the code; the
+FinLexPurple name and logo are trademarks — see the [trademark policy](TRADEMARKS.md).
