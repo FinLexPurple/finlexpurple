@@ -36,7 +36,7 @@ def test_wordmark_is_thick_block_finlex_with_purple_companion() -> None:
 def test_wordmark_two_tone_is_a_strong_split(monkeypatch) -> None:
     out = _render_truecolor(C.wordmark(), monkeypatch)
     assert "38;2;13;148;136" in out        # FinLex in deep teal #0D9488 (dimmer)
-    assert "1;38;2;103;232;249" in out     # Purple companion: bold + bright cyan #67E8F9
+    assert "1;38;2;234;241;245" in out     # Purple companion: bold + bright near-white #EAF1F5
 
 
 def test_info_box_has_target_cursor_and_mode_row() -> None:
