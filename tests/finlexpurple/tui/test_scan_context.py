@@ -43,10 +43,9 @@ def test_egress_is_default_deny_around_the_target_host(tmp_path: Path) -> None:
         raise AssertionError("out-of-scope egress was not blocked")
 
 
-def test_gate_is_interactive_and_asks_the_human(tmp_path: Path, monkeypatch) -> None:
-    # With approval required, a state-changing standard action asks the human in the
-    # chat (force the policy so the test does not depend on the ambient config).
-    monkeypatch.setattr("finlexpurple.tui.scan_context._require_human_approval", lambda: True)
+def test_gate_is_interactive_and_asks_the_human(tmp_path: Path) -> None:
+    # Every state-changing standard action asks the human in the chat (always-ask),
+    # with no dependence on the ambient REQUIRE_HUMAN_APPROVAL config.
     denied, _ = _context(tmp_path, ask=lambda _p: "n")
     assert denied.gate.resolve(GateAction("price test", "cashier", True)) is GateOutcome.DENIED
     approved, _ = _context(tmp_path, ask=lambda _p: "y")
@@ -64,15 +63,16 @@ def test_hard_gated_category_still_requires_the_human(tmp_path: Path) -> None:
     assert approved.gate.resolve(GateAction("payout", "vault", True)) is GateOutcome.APPROVED
 
 
-def test_require_human_approval_fails_safe_to_true(monkeypatch) -> None:
-    # When the config cannot load, the chat gate defaults to always asking the human.
-    import finlexpurple.tui.scan_context as sc
-
-    def _boom() -> object:
-        raise ValueError("no config")
-
-    monkeypatch.setattr(sc.Config, "load", staticmethod(_boom))
-    assert sc._require_human_approval() is True
+def test_standard_gate_always_asks_in_chat_regardless_of_config(tmp_path: Path, monkeypatch) -> None:
+    # The deliberate tightening: even with REQUIRE_HUMAN_APPROVAL=false (which the CLI would
+    # config-allow for a standard category), a standard state-changing action in chat still
+    # needs approval and still asks the human — because the model chose to run it.
+    monkeypatch.setenv("REQUIRE_HUMAN_APPROVAL", "false")
+    monkeypatch.setenv("FLP_REQUIRE_HUMAN_APPROVAL", "false")
+    ctx, _ = _context(tmp_path, ask=lambda _p: "n")
+    standard = GateAction("price test", "cashier", True)
+    assert ctx.gate.needs_approval(standard) is True       # always gated in chat
+    assert ctx.gate.resolve(standard) is GateOutcome.DENIED  # the human's no is binding
 
 
 def test_non_state_changing_action_is_never_gated(tmp_path: Path) -> None:
