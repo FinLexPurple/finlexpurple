@@ -34,10 +34,10 @@ def test_wordmark_is_one_line_outlined_blocks() -> None:
 
 def test_wordmark_two_tone_is_a_strong_split(monkeypatch) -> None:
     out = _render_truecolor(C.wordmark(), monkeypatch)
-    assert "38;2;148;163;184" in out       # FinLex in muted slate #94A3B8
-    assert "38;2;94;234;212" in out        # Purple in bright teal #5EEAD4
-    # The near-identical primary teal is NOT used for the split anymore.
-    assert "38;2;45;212;191" not in out
+    assert "38;2;13;148;136" in out        # FinLex in deep teal #0D9488 (dimmer)
+    assert "38;2;103;232;249" in out       # Purple in bright cyan #67E8F9 (brighter)
+    # The near-identical light pair that read the same is gone.
+    assert "38;2;148;163;184" not in out and "38;2;94;234;212" not in out
 
 
 def test_info_box_has_target_cursor_and_mode_row() -> None:
