@@ -22,7 +22,6 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 from urllib.parse import parse_qs, urlsplit
 
-from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.evidence.verify import verify_bundle
@@ -32,6 +31,7 @@ from finlexpurple.recon.endpoint_catalog import Endpoint
 from finlexpurple.reporting.output_layout import write_report
 from finlexpurple.security.egress_policy import EgressPolicy
 from finlexpurple.selector import selector
+from finlexpurple.verifier.read_back import settlement_confirmer_for as _settlement_confirmer_for
 
 _CHECKOUT = {"method": "GET", "path": "/checkout", "parameter_names": ["price"], "content_type": None}
 _WEBHOOK = {"method": "POST", "path": "/payment/webhook", "parameter_names": [], "content_type": None}
