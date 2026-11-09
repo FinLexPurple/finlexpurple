@@ -30,32 +30,8 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl-C", "cancel"),
 )
 
-# The full block cell (the letter FILL); every other non-space art character is a
-# box-drawing edge forming the embossed OUTLINE/shadow.
-_FILL = "█"  # █
-
-
-def _styled_art(lines: tuple[str, ...], fill_style: str, shadow_style: str) -> Text:
-    """Render figlet block art as a Text: fill cells one style, outline/shadow edges another.
-
-    The two styles give each letter the stamped/embossed look — a filled block with a
-    1-cell box-drawing outline — and the outline is visible even in NO_COLOR because it is a
-    different character, not just a different color.
-    """
-
-    text = Text(no_wrap=True)
-    last = len(lines) - 1
-    for row, line in enumerate(lines):
-        for char in line:
-            if char == _FILL:
-                text.append(char, style=fill_style)
-            elif char == " ":
-                text.append(char)
-            else:  # a box-drawing edge: the outline/shadow
-                text.append(char, style=shadow_style)
-        if row < last:
-            text.append("\n")
-    return text
+# A two-space gutter between the two words laid side by side on one line.
+_WORD_GAP = "  "
 
 
 @dataclass(frozen=True)
@@ -71,17 +47,22 @@ class SessionInfo:
 
 
 def wordmark() -> Text:
-    """The big embossed block wordmark, two-tone by word: FinLex over Purple.
+    """The one-line outlined block wordmark: FinLex and Purple side by side, strong two-tone.
 
-    FinLex fills in primary teal, Purple in bright teal; both share a muted outline/shadow
-    for the stamped 3D depth. Stacked (not side by side) because the full name is too wide
-    for one line in a readable 3D font; the two words keep a clean color boundary.
+    A thin, crisp outlined block font. The two words sit on the same rows (like the
+    reference's DARK|MOON) with an obvious color split — FinLex in muted slate, Purple in
+    bright teal — for contrast that reads at a glance, not two near-identical teals.
     """
 
-    mark = _styled_art(FINLEX_ART, "flp.primary", "flp.muted")
-    mark.append("\n")
-    mark.append_text(_styled_art(PURPLE_ART, "flp.bright", "flp.muted"))
-    return mark
+    text = Text(no_wrap=True)
+    last = len(FINLEX_ART) - 1
+    for row, (finlex_row, purple_row) in enumerate(zip(FINLEX_ART, PURPLE_ART)):
+        text.append(finlex_row, style="flp.muted")
+        text.append(_WORD_GAP)
+        text.append(purple_row, style="flp.bright")
+        if row < last:
+            text.append("\n")
+    return text
 
 
 def _info_rows(info: SessionInfo) -> Text:
