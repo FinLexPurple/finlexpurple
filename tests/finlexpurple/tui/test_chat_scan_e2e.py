@@ -131,10 +131,9 @@ def test_nothing_is_scanned_when_the_human_denies_scope(base_url) -> None:
     assert all(p == "49.99" for p in _VulnApp.seen_prices)
 
 
-def test_gate_denial_keeps_the_finding_reported_not_verified(base_url, monkeypatch) -> None:
-    # With approval required (force it, since the standard cashier gate follows the ambient
-    # REQUIRE_HUMAN_APPROVAL exactly as the CLI does), a 'no' at the gate is fully binding.
-    monkeypatch.setattr("finlexpurple.tui.scan_context._require_human_approval", lambda: True)
+def test_gate_denial_keeps_the_finding_reported_not_verified(base_url) -> None:
+    # Chat always asks on every state-changing probe (the deliberate tightening), so a 'no'
+    # at the gate is fully binding even for a standard category the CLI would config-allow.
     reply, out = _run(base_url, agent="cashier", ask=_scripted_ask(scope="y", gate="n"))
     assert reply == "done"
     assert "scope confirmed" in out
