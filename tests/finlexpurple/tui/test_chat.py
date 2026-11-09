@@ -72,3 +72,23 @@ def test_chat_command_refuses_json_logs() -> None:
     result = CliRunner().invoke(app, ["--json-logs", "chat"])
     assert result.exit_code == 2
     assert "not available with --json-logs" in result.output
+
+
+def test_chat_turn_handler_threads_the_human_ask_into_the_dispatcher(monkeypatch) -> None:
+    # The handler must pass the human-input function through to the dispatcher so the
+    # interactive scope/gate prompts reach the person at the keyboard (decision D).
+    from finlexpurple.cli import _chat_turn_handler
+    from finlexpurple.providers import factory
+    from finlexpurple.tui import dispatch
+    from finlexpurple.tui.theme import make_console
+
+    captured: dict = {}
+    monkeypatch.setattr(factory, "create_provider", lambda *a, **k: object())
+    monkeypatch.setattr(dispatch, "dispatch_turn", lambda **kw: captured.update(kw) or "ok")
+
+    def ask(_prompt: str) -> str:
+        return "y"
+
+    handler = _chat_turn_handler(make_console(file=io.StringIO(), no_color=True), ask)
+    assert handler("hi", []) == "ok"
+    assert captured["ask"] is ask
