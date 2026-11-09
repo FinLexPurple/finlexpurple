@@ -24,9 +24,10 @@ from finlexpurple.tui import palette
 from finlexpurple.tui.components import (
     SHORTCUTS,
     SessionInfo,
-    banner_panel,
     hints_line,
     session_info_panel,
+    tip_line,
+    wordmark,
 )
 
 # Given the user's line and the conversation so far, produce the assistant's reply text.
@@ -65,9 +66,12 @@ def _bottom_toolbar() -> FormattedText:
 
 
 def _print_session_screen(console: Console, info: SessionInfo) -> None:
-    console.print(banner_panel())
+    console.print(wordmark())
+    console.print()
     console.print(session_info_panel(info))
-    console.print(hints_line())
+    console.print(hints_line(), justify="right")
+    console.print()
+    console.print(tip_line())
     console.print()
 
 

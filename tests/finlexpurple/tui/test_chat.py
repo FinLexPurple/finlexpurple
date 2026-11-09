@@ -29,9 +29,10 @@ def _run(script: str, handler) -> str:
 
 def test_session_screen_prints_once_at_the_top() -> None:
     out = _run("/exit\n", lambda line, history: "")
-    assert "| __(_)" in out        # wordmark
-    assert "session" in out        # session-info box
+    assert "█" in out         # block wordmark cells
+    assert "TARGET:" in out        # session-info box
     assert "/scan" in out          # hints
+    assert "Tip" in out            # tip line
     assert out.rstrip().endswith("bye")
 
 
