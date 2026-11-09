@@ -37,10 +37,12 @@ _PURPLE_WORD = "P U R P L E"
 _PURPLE_ROW = len(FINLEX_ART) - 2
 _PURPLE_GAP = "   "
 
-# Provisional wordmark colors (pending the separate color step): FinLex a dim teal, Purple a
-# brighter cyan — a dim-vs-bright split. The exact pair is finalized after the shape is signed off.
+# Wordmark colors: a strong, measured dim-vs-bright split (the DARK-vs-MOON effect).
+# FinLex is a dim deep teal, Purple a bright near-white — contrast 3.28:1 between them, while
+# both stay readable on the dark ground (FinLex ~5.2:1, Purple ~16.9:1). The bright element is
+# the SMALL word, where legibility matters most; the big block carries the brand teal.
 _MARK_DIM = "#0D9488"     # FinLex — deep teal (dimmer)
-_MARK_BRIGHT = "#67E8F9"  # Purple — bright cyan (brighter)
+_MARK_BRIGHT = "#EAF1F5"  # Purple — bright cool white (brighter)
 
 
 @dataclass(frozen=True)
@@ -60,8 +62,8 @@ def wordmark() -> Text:
 
     Only "FinLex" is the big filled/embossed block (ansi_shadow, fits one line at any normal
     width); "Purple" sits alongside on the block's lower row as bold, letter-spaced text — a
-    deliberate small wordmark, not throwaway text. Colors are a provisional dim-vs-bright pair,
-    finalized in the separate color step.
+    deliberate small wordmark, not throwaway text. The two colors are a measured dim-vs-bright
+    pair (deep teal FinLex, bright near-white Purple; 3.28:1 contrast).
     """
 
     text = Text(no_wrap=True)
