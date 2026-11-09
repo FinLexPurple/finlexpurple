@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import os
-import re
 import sys
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
@@ -71,6 +69,7 @@ from finlexpurple.telemetry import feedback as telemetry_feedback
 from finlexpurple.telemetry import sender as telemetry_sender
 from finlexpurple.telemetry.install_counter import get_or_create_install_id
 from finlexpurple.tools.installed_check import check_tools, format_tool_report
+from finlexpurple.verifier import read_back
 from finlexpurple.verifier.replay.canary import HttpCanary
 
 # A per-run request kill-ceiling for the detection prober (§15 default-on cap).
@@ -529,33 +528,20 @@ def _orchestrate_and_report(
         # re-execution. Teller/Vault stay hard-gated and can never be allowed.
         gate = ApprovalGate(require_human_approval, interactive=False, audit_log=audit)
 
-        def _charge_confirmer(finding: Finding, value: str) -> bool | None:
-            # Genuine in-scope read-back via the egress-checked prober: re-read the
-            # resource without the tampered input and see whether the manipulated
-            # amount persisted. Never synthesize a charge — if the read-back cannot
-            # be made, return None so the finding stays [REPORTED].
-            try:
-                return value in prober.request("GET", finding.url).text
-            except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
-                return None
-
-        # Webhook-bypass settlement read-back from a SEPARATE operator-provided
-        # order-status oracle (never the webhook URL itself); absent one it stays
-        # INCONCLUSIVE, never VERIFIED.
-        _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
-        _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
-        _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
-        _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
-        _race_confirmer = _race_confirmer_for(prober, order_status_url)
-
+        # In-scope read-back confirmers (single source of truth: verifier.read_back).
+        # Each verifies a durable effect by reading in-scope state back through the
+        # egress-checked prober; the settlement/coupon/status/refund/race read-backs
+        # use the SEPARATE operator-provided order-status oracle, and absent one each
+        # stays INCONCLUSIVE, never VERIFIED.
         executor = Executor(
             {"phase8_stub": WebDetector(
                 origin=origin, prober=prober, sink=collected, fingerprint=fingerprint, canary=canary,
-                gate=gate, charge_confirmer=_charge_confirmer,
-                settlement_confirmer=_settlement_confirmer, coupon_confirmer=_coupon_confirmer,
-                payment_status_confirmer=_payment_status_confirmer,
-                refund_confirmer=_refund_confirmer,
-                race_confirmer=_race_confirmer,
+                gate=gate, charge_confirmer=read_back.charge_confirmer_for(prober),
+                settlement_confirmer=read_back.settlement_confirmer_for(prober, order_status_url),
+                coupon_confirmer=read_back.coupon_confirmer_for(prober, order_status_url),
+                payment_status_confirmer=read_back.payment_status_confirmer_for(prober, order_status_url),
+                refund_confirmer=read_back.refund_confirmer_for(prober, order_status_url),
+                race_confirmer=read_back.race_confirmer_for(prober, order_status_url),
                 run_financial=run_financial,
             )}
         )
@@ -732,201 +718,6 @@ def init() -> None:
         typer.echo(".env already exists; leaving it unchanged.")
         raise typer.Exit()
     typer.echo(f"Created {destination}")
-
-
-def _settlement_confirmer_for(
-    prober: HttpProber, order_status_url: str | None
-) -> Callable[[Finding], bool | None]:
-    """Build the webhook-bypass settlement read-back from an operator-provided oracle.
-
-    The forged callback's durable effect — did the order flip to paid? — is read
-    from a SEPARATE, operator-provided order-status URL, never by re-reading the
-    webhook endpoint (a webhook URL does not expose order state). Without an
-    oracle URL a real read-back is impossible, so it returns ``None`` and the
-    finding stays INCONCLUSIVE — never VERIFIED without a genuine read. With one,
-    it substitutes the forged sentinel order id for a literal ``{order_id}``
-    placeholder and GETs that URL through the egress-checked prober (in-scope
-    only; an out-of-scope URL is blocked before any socket opens). It returns
-    ``True`` only when the oracle genuinely shows that order paid, ``False`` when
-    the read succeeds but the order is not paid (or absent), and ``None`` when the
-    read cannot be made. A paid signal is never synthesized.
-    """
-
-    from finlexpurple.finance.payment_tests import webhook_bypass
-
-    def confirm(finding: Finding) -> bool | None:
-        del finding  # the forgery targets a fixed sentinel order; the oracle URL addresses it
-        if not order_status_url:
-            return None
-        url = order_status_url.replace("{order_id}", webhook_bypass.FORGED_ORDER_ID)
-        try:
-            text = prober.request("GET", url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
-            return None
-        return webhook_bypass.PAID_MARKER in text and webhook_bypass.FORGED_ORDER_ID in text
-
-    return confirm
-
-
-def _coupon_confirmer_for(
-    prober: HttpProber, order_status_url: str | None
-) -> Callable[[Finding, str], bool | None]:
-    """Build the coupon-abuse read-back from the same operator-provided order oracle.
-
-    The bogus coupon's durable effect — did the illegitimate discount persist on
-    the cart order? — is read from the SAME order-status oracle webhook_bypass uses
-    (``--order-status-url``), pointed at the cart order id. Without an oracle URL a
-    real read-back is impossible, so it returns ``None`` and the finding stays
-    INCONCLUSIVE — never VERIFIED without a genuine read. With one, it substitutes
-    the cart order id for a literal ``{order_id}`` placeholder, GETs that URL
-    through the egress-checked prober (in-scope only), and returns ``True`` only
-    when the applied coupon code is genuinely recorded on the persisted order,
-    ``False`` when the read succeeds without it, and ``None`` when it cannot read.
-    A discount signal is never synthesized.
-    """
-
-    from finlexpurple.finance.payment_tests import coupon_abuse
-
-    def confirm(finding: Finding, code: str) -> bool | None:
-        del finding  # the coupon targets the fixed cart order; the oracle URL addresses it
-        if not order_status_url:
-            return None
-        url = order_status_url.replace("{order_id}", coupon_abuse.CART_ORDER_ID)
-        try:
-            text = prober.request("GET", url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
-            return None
-        return code in text
-
-    return confirm
-
-
-def _payment_status_confirmer_for(
-    prober: HttpProber, order_status_url: str | None
-) -> Callable[[Finding, str], bool | None]:
-    """Build the payment-status read-back from the same operator-provided order oracle.
-
-    The client-set status's durable effect — is the order durably marked (e.g.
-    ``paid``) without settlement? — is read from the SAME order-status oracle
-    (``--order-status-url``), pointed at the dedicated status order id. Without an
-    oracle URL a real read-back is impossible, so it returns ``None`` and the
-    finding stays INCONCLUSIVE — never VERIFIED without a genuine read. With one,
-    it substitutes the status order id for a literal ``{order_id}`` placeholder,
-    GETs that URL through the egress-checked prober (in-scope only), and returns
-    ``True`` only when the order genuinely shows that status, ``False`` when the
-    read succeeds without it, and ``None`` when it cannot read. A paid signal is
-    never synthesized.
-    """
-
-    from finlexpurple.finance.payment_tests import payment_status_trust
-
-    def confirm(finding: Finding, status: str) -> bool | None:
-        del finding  # the set targets the fixed status order; the oracle URL addresses it
-        if not order_status_url:
-            return None
-        url = order_status_url.replace("{order_id}", payment_status_trust.STATUS_ORDER_ID)
-        try:
-            text = prober.request("GET", url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
-            return None
-        return status in text and payment_status_trust.STATUS_ORDER_ID in text
-
-    return confirm
-
-
-# Machine-readable tokens the refund-status oracle exposes for the read-back: the
-# order's durable amount paid and refunded total. The tool parses BOTH and owns the
-# over-refund verdict (refunded > paid) itself — it never trusts a lab-computed flag.
-_REFUND_AMOUNT_RE = re.compile(r'data-refund-amount="([0-9]+(?:\.[0-9]+)?)"')
-_REFUND_REFUNDED_RE = re.compile(r'data-refund-refunded="([0-9]+(?:\.[0-9]+)?)"')
-
-
-def _refund_confirmer_for(
-    prober: HttpProber, order_status_url: str | None
-) -> Callable[[Finding, str], bool | None]:
-    """Build the refund over-refund read-back from the same operator-provided order oracle.
-
-    The refund's durable effect — does the order's refunded total exceed the amount
-    paid? — is read from the SAME order-status oracle (``--order-status-url``),
-    pointed at the dedicated refund order id. Without an oracle URL a real read-back
-    is impossible, so it returns ``None`` and the finding stays INCONCLUSIVE — never
-    VERIFIED without a genuine read. With one, it substitutes the refund order id for
-    a literal ``{order_id}`` placeholder, GETs that URL through the egress-checked
-    prober (in-scope only), parses the durable ``amount`` and ``refunded`` tokens,
-    and returns ``True`` only when ``refunded > amount`` (a durable over-refund),
-    ``False`` when the read succeeds and it does not, and ``None`` when it cannot read
-    or parse both numbers. The tool, not the lab, owns the comparison; an over-refund
-    signal is never synthesized.
-    """
-
-    from finlexpurple.finance.payment_tests import refund_abuse
-
-    def confirm(finding: Finding, amount: str) -> bool | None:
-        del finding, amount  # the verdict compares durable refunded vs paid, not the requested value
-        if not order_status_url:
-            return None
-        url = order_status_url.replace("{order_id}", refund_abuse.REFUND_ORDER_ID)
-        try:
-            text = prober.request("GET", url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
-            return None
-        if refund_abuse.REFUND_ORDER_ID not in text:
-            return None
-        paid_match = _REFUND_AMOUNT_RE.search(text)
-        refunded_match = _REFUND_REFUNDED_RE.search(text)
-        if paid_match is None or refunded_match is None:
-            return None
-        try:
-            return float(refunded_match.group(1)) > float(paid_match.group(1))
-        except ValueError:  # non-numeric durable state -> unconfirmable
-            return None
-
-    return confirm
-
-
-# Machine-readable token the race oracle exposes: the number of times the single-use
-# operation was durably applied. The tool parses it and owns the double-processing
-# verdict (applied >= 2) itself — it never trusts a lab-computed flag.
-_RACE_APPLIED_RE = re.compile(r'data-race-applied="([0-9]+)"')
-
-
-def _race_confirmer_for(
-    prober: HttpProber, order_status_url: str | None
-) -> Callable[[Finding, int], bool | None]:
-    """Build the double-processing read-back from the same operator-provided order oracle.
-
-    The race's durable effect — was the single-use operation applied more than once? —
-    is read from the SAME order-status oracle (``--order-status-url``), pointed at the
-    dedicated voucher order id. Without an oracle URL a real read-back is impossible, so
-    it returns ``None`` and the finding stays INCONCLUSIVE — never VERIFIED without a
-    genuine read. With one, it substitutes the voucher order id for a literal
-    ``{order_id}`` placeholder, GETs that URL through the egress-checked prober (in-scope
-    only), parses the durable ``applied`` count, and returns ``True`` only when
-    ``applied >= 2`` (a durable double-processing), ``False`` when the read succeeds and
-    it does not, and ``None`` when it cannot read or parse it. The tool, not the lab,
-    owns the comparison; a double-processing signal is never synthesized, and a genuine
-    race that applied once this run honestly returns ``False`` -> INCONCLUSIVE.
-    """
-
-    from finlexpurple.finance.payment_tests import race_condition
-
-    def confirm(finding: Finding, accepted: int) -> bool | None:
-        del finding, accepted  # the verdict reads durable applied-count, not the burst's accept count
-        if not order_status_url:
-            return None
-        url = order_status_url.replace("{order_id}", race_condition.RACE_ORDER_ID)
-        try:
-            text = prober.request("GET", url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> inconclusive
-            return None
-        if race_condition.RACE_ORDER_ID not in text:
-            return None
-        applied_match = _RACE_APPLIED_RE.search(text)
-        if applied_match is None:
-            return None
-        return int(applied_match.group(1)) >= 2
-
-    return confirm
 
 
 @app.command()
@@ -1460,20 +1251,10 @@ def run_agent(
         typer.echo(settings.warning, err=True)
     gate = ApprovalGate(settings.require_human_approval, interactive=False, audit_log=audit)
 
-    def _charge_confirmer(finding: Finding, value: str) -> bool | None:
-        try:
-            return value in prober.request("GET", finding.url).text
-        except Exception:  # noqa: BLE001 - any read-back failure = unconfirmable -> stays reported
-            return None
-
-    # Settlement read-back from the operator-provided order-status oracle
-    # (--order-status-url, or its FLP_ORDER_STATUS_URL env fallback via typer);
-    # absent one it stays INCONCLUSIVE, never VERIFIED.
-    _settlement_confirmer = _settlement_confirmer_for(prober, order_status_url)
-    _coupon_confirmer = _coupon_confirmer_for(prober, order_status_url)
-    _payment_status_confirmer = _payment_status_confirmer_for(prober, order_status_url)
-    _refund_confirmer = _refund_confirmer_for(prober, order_status_url)
-    _race_confirmer = _race_confirmer_for(prober, order_status_url)
+    # In-scope read-back confirmers (single source of truth: verifier.read_back).
+    # The settlement/coupon/status/refund/race read-backs use the operator-provided
+    # order-status oracle (--order-status-url, or its FLP_ORDER_STATUS_URL env
+    # fallback via typer); absent one each stays INCONCLUSIVE, never VERIFIED.
 
     # Order-IDOR identities (optional); a malformed config file is a usage error.
     try:
@@ -1484,9 +1265,12 @@ def run_agent(
 
     request = AgentRequest(
         target=normalized.canonical, recon=_recon, prober=prober, gate=gate,
-        charge_confirmer=_charge_confirmer, settlement_confirmer=_settlement_confirmer,
-        coupon_confirmer=_coupon_confirmer, payment_status_confirmer=_payment_status_confirmer,
-        refund_confirmer=_refund_confirmer, race_confirmer=_race_confirmer,
+        charge_confirmer=read_back.charge_confirmer_for(prober),
+        settlement_confirmer=read_back.settlement_confirmer_for(prober, order_status_url),
+        coupon_confirmer=read_back.coupon_confirmer_for(prober, order_status_url),
+        payment_status_confirmer=read_back.payment_status_confirmer_for(prober, order_status_url),
+        refund_confirmer=read_back.refund_confirmer_for(prober, order_status_url),
+        race_confirmer=read_back.race_confirmer_for(prober, order_status_url),
         idor_identities=idor_identities,
     )
     try:
