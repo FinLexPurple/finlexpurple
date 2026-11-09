@@ -31,8 +31,17 @@ def test_wordmark_is_big_block_lettering() -> None:
 
 def test_wordmark_two_tone_uses_primary_and_bright_teal(monkeypatch) -> None:
     out = _render_truecolor(C.wordmark(), monkeypatch)
-    assert "38;2;45;212;191" in out        # FINLEX in primary teal #2DD4BF
-    assert "38;2;94;234;212" in out        # PURPLE in bright teal #5EEAD4
+    assert "38;2;45;212;191" in out        # FinLex fill in primary teal #2DD4BF
+    assert "38;2;94;234;212" in out        # Purple fill in bright teal #5EEAD4
+
+
+def test_wordmark_is_embossed_with_muted_outline_edges(monkeypatch) -> None:
+    # Box-drawing edges give the stamped 3D outline — visible in NO_COLOR (different chars)
+    # and colored muted (the shadow) in truecolor.
+    plain = _render(C.wordmark(), color=False)
+    assert any(edge in plain for edge in ("╗", "║", "═"))  # ╗ ║ ═ outline
+    colored = _render_truecolor(C.wordmark(), monkeypatch)
+    assert "38;2;148;163;184" in colored   # outline/shadow in muted slate #94A3B8
 
 
 def test_info_box_has_target_cursor_and_mode_row() -> None:
