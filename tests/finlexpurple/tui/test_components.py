@@ -21,23 +21,22 @@ def _render_truecolor(renderable, monkeypatch, *, width: int = 100) -> str:
     return _render(renderable, color=True, width=width)
 
 
-def test_wordmark_is_one_line_outlined_blocks() -> None:
+def test_wordmark_is_thick_block_finlex_with_purple_companion() -> None:
     out = _render(C.wordmark(), color=False, width=120)
     lines = [ln for ln in out.splitlines() if ln.strip()]
-    # Thin outlined block font: uses outline strokes, not solid █ fill.
-    assert "|" in out and "_" in out and "█" not in out
-    # One-line composition: a few tall rows, much wider than tall (both words on each row).
-    assert 3 <= len(lines) <= 7
-    assert max(len(ln) for ln in lines) > 3 * len(lines)
-    assert "| __(_)" not in out  # not the old small ASCII banner
+    # FinLex is a solid filled block font (█), not thin hollow outlines.
+    assert "█" in out
+    assert 5 <= len(lines) <= 7            # the block is a few rows tall, one line of lettering
+    assert max(len(ln) for ln in lines) <= 80  # FinLex-only block fits comfortably one line
+    # "Purple" is the small letter-spaced companion alongside.
+    assert "P U R P L E" in out
+    assert "| __(_)" not in out            # not the old small ASCII banner
 
 
 def test_wordmark_two_tone_is_a_strong_split(monkeypatch) -> None:
     out = _render_truecolor(C.wordmark(), monkeypatch)
     assert "38;2;13;148;136" in out        # FinLex in deep teal #0D9488 (dimmer)
-    assert "38;2;103;232;249" in out       # Purple in bright cyan #67E8F9 (brighter)
-    # The near-identical light pair that read the same is gone.
-    assert "38;2;148;163;184" not in out and "38;2;94;234;212" not in out
+    assert "1;38;2;103;232;249" in out     # Purple companion: bold + bright cyan #67E8F9
 
 
 def test_info_box_has_target_cursor_and_mode_row() -> None:
