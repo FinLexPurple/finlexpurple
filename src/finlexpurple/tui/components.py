@@ -18,6 +18,7 @@ from rich.table import Table
 from rich.text import Text
 
 from finlexpurple.tui import palette
+from finlexpurple.tui.wordmark_art import FINLEX_ART, PURPLE_ART
 
 # The shortcut hints shown under the info box and (persistently) in the input toolbar.
 SHORTCUTS: tuple[tuple[str, str], ...] = (
@@ -29,30 +30,32 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
     ("Ctrl-C", "cancel"),
 )
 
-# A 5-row block font (█) for the big wordmark. Uppercase only; every glyph is 5 columns.
-_H = 5
-_BLOCK_GLYPHS: dict[str, tuple[str, ...]] = {
-    "F": ("█████", "█    ", "████ ", "█    ", "█    "),
-    "I": ("█████", "  █  ", "  █  ", "  █  ", "█████"),
-    "N": ("█   █", "██  █", "█ █ █", "█  ██", "█   █"),
-    "L": ("█    ", "█    ", "█    ", "█    ", "█████"),
-    "E": ("█████", "█    ", "████ ", "█    ", "█████"),
-    "X": ("█   █", " █ █ ", "  █  ", " █ █ ", "█   █"),
-    "P": ("████ ", "█   █", "████ ", "█    ", "█    "),
-    "U": ("█   █", "█   █", "█   █", "█   █", "█████"),
-    "R": ("████ ", "█   █", "████ ", "█  █ ", "█   █"),
-}
+# The full block cell (the letter FILL); every other non-space art character is a
+# box-drawing edge forming the embossed OUTLINE/shadow.
+_FILL = "█"  # █
 
 
-def _block_rows(word: str) -> list[str]:
-    """Render ``word`` as ``_H`` rows of block glyphs, one space between glyphs."""
+def _styled_art(lines: tuple[str, ...], fill_style: str, shadow_style: str) -> Text:
+    """Render figlet block art as a Text: fill cells one style, outline/shadow edges another.
 
-    rows = [""] * _H
-    for char in word:
-        glyph = _BLOCK_GLYPHS[char]
-        for r in range(_H):
-            rows[r] += glyph[r] + " "
-    return [row.rstrip() for row in rows]
+    The two styles give each letter the stamped/embossed look — a filled block with a
+    1-cell box-drawing outline — and the outline is visible even in NO_COLOR because it is a
+    different character, not just a different color.
+    """
+
+    text = Text(no_wrap=True)
+    last = len(lines) - 1
+    for row, line in enumerate(lines):
+        for char in line:
+            if char == _FILL:
+                text.append(char, style=fill_style)
+            elif char == " ":
+                text.append(char)
+            else:  # a box-drawing edge: the outline/shadow
+                text.append(char, style=shadow_style)
+        if row < last:
+            text.append("\n")
+    return text
 
 
 @dataclass(frozen=True)
@@ -68,18 +71,17 @@ class SessionInfo:
 
 
 def wordmark() -> Text:
-    """The big two-tone block wordmark: FINLEX in primary teal, PURPLE in bright teal."""
+    """The big embossed block wordmark, two-tone by word: FinLex over Purple.
 
-    left = _block_rows("FINLEX")
-    right = _block_rows("PURPLE")
-    text = Text(no_wrap=True)
-    for row in range(_H):
-        text.append(left[row], style="flp.primary")
-        text.append("  ")
-        text.append(right[row], style="flp.bright")
-        if row < _H - 1:
-            text.append("\n")
-    return text
+    FinLex fills in primary teal, Purple in bright teal; both share a muted outline/shadow
+    for the stamped 3D depth. Stacked (not side by side) because the full name is too wide
+    for one line in a readable 3D font; the two words keep a clean color boundary.
+    """
+
+    mark = _styled_art(FINLEX_ART, "flp.primary", "flp.muted")
+    mark.append("\n")
+    mark.append_text(_styled_art(PURPLE_ART, "flp.bright", "flp.muted"))
+    return mark
 
 
 def _info_rows(info: SessionInfo) -> Text:
