@@ -122,8 +122,10 @@ def _print_step(console: Console, status: str, text: str) -> None:
 
 def _print_findings(console: Console, findings: list) -> None:
     for finding in findings:
+        # Escape the status brackets so rich renders "[verified]" literally rather than
+        # parsing it as a (invalid) style tag and dropping it.
         console.print(
-            f"  [flp.muted][{finding.status.value}][/] {finding.severity.value} "
+            f"  [flp.muted]\\[{finding.status.value}][/] {finding.severity.value} "
             f"{finding.vulnerability_class} {finding.url}"
         )
 
