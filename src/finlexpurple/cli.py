@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.resources import files
@@ -131,10 +132,16 @@ _CHAT_SYSTEM_PROMPT = (
     "deterministic replay reproduces it — never claim otherwise. State-changing actions are "
     "gated and some categories are non-overridable; never imply you can bypass a gate or a "
     "spend/egress cap.\n\n"
-    "Each step, respond with a decision: set action to \"list_agents\" to look up the named "
-    "agent roster when that helps answer, otherwise set action to \"reply\" and put your "
-    "answer to the user in message. Only use the operations offered to you; never claim to "
-    "run one that is not available."
+    "Each step, respond with a decision. Set action to \"list_agents\" to look up the named "
+    "agent roster. Set action to \"scan\" with a target URL to run a read-only scan of that "
+    "target (recon, detection, then deterministic verification). Set action to \"run_agent\" "
+    "with an agent name and a target URL to run one named specialist (for example cashier for "
+    "payment testing). Otherwise set action to \"reply\" and put your answer in message.\n\n"
+    "Scanning always asks the human to confirm scope first, and every state-changing probe "
+    "pauses for the human's y/N approval — you never approve on their behalf, hard-gated "
+    "agents (teller, vault) always require it, and egress never leaves the confirmed target. "
+    "Only use the operations offered to you; never claim to run one that is not available, and "
+    "report results exactly as the operation returned them."
 )
 
 
@@ -155,12 +162,14 @@ def _chat_session_info(target: str | None) -> Any:
     return SessionInfo(target=target, mode="chat", provider=provider, model=model)
 
 
-def _chat_turn_handler(console: Any) -> Any:
+def _chat_turn_handler(console: Any, ask: Callable[[str], str]) -> Any:
     """Build the chat turn handler: the autonomous dispatcher over the configured provider.
 
     The dispatcher lets the agent decide which registered (already-gated) operation to run
-    and renders its activity into ``console``. If no provider is configured the handler
-    degrades to a clear setup hint rather than crashing, so the session screen stays usable.
+    and renders its activity into ``console``. ``ask`` is the human-input function the
+    interactive operations use (scope confirmation and the approval gate) — the human at the
+    keyboard answers, never the model. If no provider is configured the handler degrades to a
+    clear setup hint rather than crashing, so the session screen stays usable.
     """
 
     from finlexpurple.providers.base import ProviderError
@@ -189,6 +198,7 @@ def _chat_turn_handler(console: Any) -> Any:
             system_prompt=_CHAT_SYSTEM_PROMPT,
             user_input=line,
             history=history,
+            ask=ask,
         )
 
     return handle
@@ -216,15 +226,26 @@ def chat(
         raise typer.Exit(code=2)
 
     from prompt_toolkit import PromptSession
+    from prompt_toolkit import prompt as pt_prompt
 
     from finlexpurple.tui import palette
     from finlexpurple.tui.chat import run_chat
     from finlexpurple.tui.theme import make_console
 
+    def _ask(message: str) -> str:
+        # The human-input prompt used mid-turn for scope confirmation and the approval
+        # gate. The main REPL prompt has already returned by the time a turn runs, so a
+        # fresh prompt_toolkit prompt owns the terminal cleanly. An interrupt/EOF is a
+        # fail-safe denial (never an accidental approval).
+        try:
+            return pt_prompt(message)
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
     console = make_console()
     code = run_chat(
         console=console,
-        handler=_chat_turn_handler(console),
+        handler=_chat_turn_handler(console, _ask),
         info=_chat_session_info(target),
         session=PromptSession(),
         color=palette.use_color(sys.stdout),
