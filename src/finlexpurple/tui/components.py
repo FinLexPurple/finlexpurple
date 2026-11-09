@@ -33,6 +33,13 @@ SHORTCUTS: tuple[tuple[str, str], ...] = (
 # A two-space gutter between the two words laid side by side on one line.
 _WORD_GAP = "  "
 
+# The wordmark two-tone pair. Chosen for strong at-a-glance contrast on a dark terminal
+# (the DARK-vs-MOON effect), which is a LIGHTNESS difference, not just a hue difference: a
+# dimmer first word and a clearly brighter second word. Kept in the cool/teal family so it
+# sits well with the rest of the app, but picked for visible contrast over an exact brand hex.
+_MARK_DIM = "#0D9488"     # FinLex — deep teal (dimmer)
+_MARK_BRIGHT = "#67E8F9"  # Purple — bright cyan (brighter)
+
 
 @dataclass(frozen=True)
 class SessionInfo:
@@ -50,16 +57,16 @@ def wordmark() -> Text:
     """The one-line outlined block wordmark: FinLex and Purple side by side, strong two-tone.
 
     A thin, crisp outlined block font. The two words sit on the same rows (like the
-    reference's DARK|MOON) with an obvious color split — FinLex in muted slate, Purple in
-    bright teal — for contrast that reads at a glance, not two near-identical teals.
+    reference's DARK|MOON) with an obvious dim-vs-bright split — FinLex in deep teal, Purple
+    in bright cyan — for contrast that reads at a glance, not two near-identical lights.
     """
 
     text = Text(no_wrap=True)
     last = len(FINLEX_ART) - 1
     for row, (finlex_row, purple_row) in enumerate(zip(FINLEX_ART, PURPLE_ART)):
-        text.append(finlex_row, style="flp.muted")
+        text.append(finlex_row, style=_MARK_DIM)
         text.append(_WORD_GAP)
-        text.append(purple_row, style="flp.bright")
+        text.append(purple_row, style=_MARK_BRIGHT)
         if row < last:
             text.append("\n")
     return text
