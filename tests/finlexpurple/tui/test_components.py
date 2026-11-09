@@ -21,27 +21,23 @@ def _render_truecolor(renderable, monkeypatch, *, width: int = 100) -> str:
     return _render(renderable, color=True, width=width)
 
 
-def test_wordmark_is_big_block_lettering() -> None:
-    out = _render(C.wordmark(), color=False)
-    assert "█" in out                 # █ block cells
-    assert out.count("\n") >= 4            # multi-row block font
-    # Rendered as blocks, not the old small ASCII banner.
-    assert "| __(_)" not in out
+def test_wordmark_is_one_line_outlined_blocks() -> None:
+    out = _render(C.wordmark(), color=False, width=120)
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    # Thin outlined block font: uses outline strokes, not solid █ fill.
+    assert "|" in out and "_" in out and "█" not in out
+    # One-line composition: a few tall rows, much wider than tall (both words on each row).
+    assert 3 <= len(lines) <= 7
+    assert max(len(ln) for ln in lines) > 3 * len(lines)
+    assert "| __(_)" not in out  # not the old small ASCII banner
 
 
-def test_wordmark_two_tone_uses_primary_and_bright_teal(monkeypatch) -> None:
+def test_wordmark_two_tone_is_a_strong_split(monkeypatch) -> None:
     out = _render_truecolor(C.wordmark(), monkeypatch)
-    assert "38;2;45;212;191" in out        # FinLex fill in primary teal #2DD4BF
-    assert "38;2;94;234;212" in out        # Purple fill in bright teal #5EEAD4
-
-
-def test_wordmark_is_embossed_with_muted_outline_edges(monkeypatch) -> None:
-    # Box-drawing edges give the stamped 3D outline — visible in NO_COLOR (different chars)
-    # and colored muted (the shadow) in truecolor.
-    plain = _render(C.wordmark(), color=False)
-    assert any(edge in plain for edge in ("╗", "║", "═"))  # ╗ ║ ═ outline
-    colored = _render_truecolor(C.wordmark(), monkeypatch)
-    assert "38;2;148;163;184" in colored   # outline/shadow in muted slate #94A3B8
+    assert "38;2;148;163;184" in out       # FinLex in muted slate #94A3B8
+    assert "38;2;94;234;212" in out        # Purple in bright teal #5EEAD4
+    # The near-identical primary teal is NOT used for the split anymore.
+    assert "38;2;45;212;191" not in out
 
 
 def test_info_box_has_target_cursor_and_mode_row() -> None:
