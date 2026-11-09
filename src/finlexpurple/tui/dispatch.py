@@ -22,13 +22,18 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 from rich.console import Console
 
 from finlexpurple.providers.base import LLMProvider, Message, ProviderError
 from finlexpurple.tui.activity import ActivityStream
+
+if TYPE_CHECKING:
+    from finlexpurple.detectors.prober import Prober
+    from finlexpurple.detectors.schema import Finding
+    from finlexpurple.recon.endpoint_catalog import Endpoint
 
 # A hard per-turn cap on how many operations the agent may chain before it must reply.
 # This is one of the caps that bind the autonomy (decision D); it is not overridable here.
@@ -220,42 +225,85 @@ def _op_run_agent(ctx: OpContext) -> OperationResult:
     return card
 
 
+def _scan_stages(
+    console: Console,
+    *,
+    recon: Callable[[str], list[Endpoint]],
+    prober: Prober,
+    root_url: str,
+) -> tuple[int, list[Finding]]:
+    """Drive recon -> detect -> verify as live activity-stream stages; return (endpoints, findings).
+
+    Each stage is a timestamped activity card that updates in place and freezes into the
+    scrollback: recon maps the surface, detection runs the SAME read-only web detectors
+    ``hunter`` uses (``detectors.dispatch.run_relevant``), and verification runs the SAME
+    deterministic replay ``sentinel`` uses (``verifier.engine.verify``). The replay mutates
+    each finding's status in place; a finding reaches ``verified`` only when its replay
+    genuinely reproduces it. This path is read-only — detection probes, no state-changing
+    sends — so no approval gate fires inside the live region.
+    """
+
+    from finlexpurple.detectors.dispatch import run_relevant
+    from finlexpurple.detectors.schema import FindingStatus
+    from finlexpurple.recon.crawler import ReconError
+    from finlexpurple.scope.enforcement import OutOfScopeError
+    from finlexpurple.verifier import engine as verifier_engine
+
+    findings: list[Finding] = []
+    with ActivityStream(console) as stream:
+        recon_step = stream.start("recon")
+        try:
+            endpoints = recon(root_url)
+        except (ReconError, OutOfScopeError):
+            stream.finish(recon_step, status="failed", detail="recon could not run safely")
+            raise
+        stream.finish(recon_step, detail=f"{len(endpoints)} endpoint(s)")
+
+        detect_step = stream.start("detect")
+        for endpoint in endpoints:
+            findings.extend(run_relevant(endpoint, prober))
+        stream.finish(detect_step, detail=f"{len(findings)} candidate(s)")
+
+        verify_step = stream.start("verify")
+        for finding in findings:
+            verifier_engine.verify(finding, prober=prober)
+        verified = sum(1 for f in findings if f.status is FindingStatus.VERIFIED)
+        stream.finish(
+            verify_step,
+            status="verified" if verified else "done",
+            detail=f"{verified} verified of {len(findings)}",
+        )
+    return len(endpoints), findings
+
+
 def _op_scan(ctx: OpContext) -> OperationResult:
-    """A quick scan: recon + detection (hunter) + deterministic verification (sentinel).
+    """A quick scan: recon + detection (hunter's detectors) + deterministic verification (sentinel's replay).
 
     Read-only across the board — detection probes, no state-changing sends — so it makes no
     gated probes; it still confirms scope with the human and is egress-checked and
-    budget-capped like every chat scan. For financial / state-changing specialist testing the
-    agent uses ``run_agent`` with a specialist (e.g. cashier), which is gate-bound.
+    budget-capped like every chat scan, and its stages render as a live activity stream. For
+    financial / state-changing specialist testing the agent uses ``run_agent`` with a
+    specialist (e.g. cashier), which is gate-bound.
     """
 
-    from finlexpurple.agents import invoker as agent_invoker
-    from finlexpurple.agents.registry import get_agent
     from finlexpurple.recon.crawler import ReconError
     from finlexpurple.scope.enforcement import OutOfScopeError
 
-    # Only hunter is pre-flighted (it runs from a bare target); sentinel is fed hunter's
-    # findings at invoke time, so its findings requirement is satisfied at runtime.
+    # Only hunter's detectors + sentinel's replay run here; both are read-only, so the live
+    # stream never has to pause for an approval prompt.
     run_ctx, refusal = _prepare_target_run(ctx, agent_names=("hunter",))
     if refusal is not None:
         _print_step(ctx.console, "blocked", refusal.text)
         return refusal
     assert run_ctx is not None
-    hunter = get_agent("hunter")
-    sentinel = get_agent("sentinel")
-    assert hunter is not None and sentinel is not None
-    _print_step(ctx.console, "running", f"scan {run_ctx.target.canonical}")
     try:
-        detected = agent_invoker.invoke(hunter, run_ctx.agent_request())
-        verified = agent_invoker.invoke(
-            sentinel, run_ctx.agent_request(findings=detected.findings)
+        endpoint_count, findings = _scan_stages(
+            ctx.console, recon=run_ctx.recon, prober=run_ctx.prober, root_url=run_ctx.target.canonical
         )
     except (ReconError, OutOfScopeError) as exc:
-        _print_step(ctx.console, "failed", "scan: could not run safely")
         return OperationResult("scan failed", f"Scan could not run safely: {exc}")
-    findings = verified.findings
-    status, card = _findings_feedback("scan", verified.summary, findings)
-    _print_step(ctx.console, status, f"scan: {verified.summary}")
+    summary = f"{endpoint_count} endpoint(s) scanned"
+    _, card = _findings_feedback("scan", summary, findings)
     _print_findings(ctx.console, findings)
     return card
 
