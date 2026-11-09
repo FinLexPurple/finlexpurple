@@ -13,11 +13,11 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import ClassVar
 
-from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.finance.payment_tests import webhook_bypass
 from finlexpurple.security.egress_policy import EgressPolicy
+from finlexpurple.verifier.read_back import settlement_confirmer_for as _settlement_confirmer_for
 
 
 class _Oracle(BaseHTTPRequestHandler):
