@@ -25,7 +25,6 @@ from urllib.parse import urlsplit
 from rich.console import Console
 
 from finlexpurple.agents.registry import AgentRequest
-from finlexpurple.config import Config, ConfigurationError
 from finlexpurple.detectors.prober import HttpProber
 from finlexpurple.detectors.schema import Finding
 from finlexpurple.finance.idor_identities import IdorIdentities
@@ -46,21 +45,6 @@ from finlexpurple.verifier import read_back
 # scan/run uses (``finlexpurple.cli._DETECTION_REQUEST_BUDGET``). Re-stated here so
 # the chat module does not import the typer CLI; a test asserts the two never drift.
 DETECTION_REQUEST_BUDGET = 2000
-
-
-def _require_human_approval() -> bool:
-    """The configured approval policy, defaulting to *always ask* when config is uncertain.
-
-    Honors ``REQUIRE_HUMAN_APPROVAL`` from the loaded config (the same setting the
-    CLI honors) and fails safe to ``True`` — always ask the human — whenever the
-    config cannot be loaded. This never loosens the gate: a hard-gated category
-    requires approval regardless of this value.
-    """
-
-    try:
-        return Config.load().require_human_approval
-    except (ConfigurationError, ValueError, OSError):
-        return True
 
 
 @dataclass(frozen=True)
@@ -144,11 +128,15 @@ def build_run_context(
     def _recon(url: str) -> list[Endpoint]:
         return list(run_recon(confirmed_scope, url, request_delay=request_delay).catalog.endpoints)
 
-    # Interactive gate: a state-changing probe pauses for the human's y/N in the
-    # chat. require_human_approval follows the config (fail-safe: always ask);
-    # hard-gated categories always ask regardless, and are never config-allowed.
+    # Interactive gate, ALWAYS-ASK: in chat every state-changing probe pauses for the
+    # human's y/N — standard and hard-gated alike — regardless of REQUIRE_HUMAN_APPROVAL.
+    # This is a deliberate tightening over the CLI (never a loosening): here the model
+    # itself chooses which operation to run (autonomous dispatch), unlike the CLI where a
+    # human typed the scan command, so that extra model-driven decision earns an extra
+    # human checkpoint. Passing require_human_approval=True makes even a standard category
+    # require approval; hard-gated categories were never config-allowable either way.
     gate = ApprovalGate(
-        _require_human_approval(),
+        True,
         interactive=True,
         confirm_fn=make_gate_confirm(console, ask),
         audit_log=audit,
