@@ -51,6 +51,7 @@ def make_console(
     force_terminal: bool | None = None,
     no_color: bool | None = None,
     width: int | None = None,
+    color_system: str | None = "auto",
 ) -> Console:
     """Build a brand-themed rich :class:`Console`.
 
@@ -58,6 +59,11 @@ def make_console(
     the stream is a TTY — matching the banner's rules. The explicit knobs exist for tests
     (force a width, force color on/off) and for the caller to pin a stream. ``highlight`` is
     off so rich never re-colors our content with its automatic syntax highlighter.
+
+    ``color_system`` is passed through to rich. It defaults to ``"auto"`` (rich detects the
+    terminal's color depth — the production behavior). A test that needs the exact 24-bit
+    brand hex pins ``"truecolor"`` so the output is deterministic on every platform: rich
+    ignores ``COLORTERM`` on Windows and would otherwise downsample to 16/256-color there.
     """
 
     return Console(
@@ -66,6 +72,7 @@ def make_console(
         force_terminal=force_terminal,
         no_color=no_color,
         width=width,
+        color_system=color_system,  # type: ignore[arg-type]  # rich's narrow Literal; we validate by use
         highlight=False,
         emoji=False,
     )
