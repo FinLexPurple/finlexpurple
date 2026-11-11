@@ -95,9 +95,18 @@ def _render_turn(console: Console, handler: TurnHandler, line: str, history: lis
     The handler is NOT wrapped in a status spinner here: a handler that shows a live
     activity stream (the autonomous dispatcher) owns the single live region for the turn,
     and rich permits only one live display at a time.
+
+    A Ctrl-C during the turn cancels the in-flight work and returns to the prompt rather than
+    tearing down the session; the turn leaves no trace in the conversation history, so the
+    next turn starts clean. (A cancel mid-probe is safe: a half-run scan changes nothing on
+    the target that the gate had not already approved, and no state is persisted here.)
     """
 
-    reply = handler(line, list(history))
+    try:
+        reply = handler(line, list(history))
+    except KeyboardInterrupt:
+        console.print("[flp.muted]^C cancelled[/]")
+        return
     history.append(Message(role="user", content=line))
     history.append(Message(role="assistant", content=reply))
     console.print()
