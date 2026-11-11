@@ -67,6 +67,24 @@ def test_help_lists_commands_and_unknown_slash_is_flagged() -> None:
     assert "unknown command '/nope'" in out
 
 
+def test_ctrl_c_mid_turn_cancels_and_returns_to_the_prompt() -> None:
+    # A handler that raises KeyboardInterrupt (Ctrl-C mid-turn) must not end the session:
+    # the turn is cancelled, nothing is added to history, and the next turn runs clean.
+    seen: list[int] = []
+
+    def handler(line: str, history: list[Message]) -> str:
+        seen.append(len(history))
+        if line == "boom":
+            raise KeyboardInterrupt
+        return f"echo: {line}"
+
+    out = _run("boom\nafter\n/exit\n", handler)
+    assert "cancelled" in out
+    assert "echo: after" in out          # the session kept going after the cancel
+    assert seen == [0, 0]                 # the cancelled turn left history empty
+    assert out.rstrip().endswith("bye")
+
+
 def test_blank_lines_are_ignored() -> None:
     calls: list[str] = []
     _run("\n   \n/exit\n", lambda line, history: calls.append(line) or "x")
