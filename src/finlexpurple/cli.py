@@ -204,6 +204,28 @@ def _chat_turn_handler(console: Any, ask: Callable[[str], str]) -> Any:
     return handle
 
 
+def _chat_history() -> Any:
+    """A persistent prompt history under the per-user config dir, or ``None`` if unavailable.
+
+    Stored next to the confirmed-scope cache (``<config>/finlexpurple/chat_history``) with the
+    same owner-only directory permissions, so the up-arrow recalls previous chat input across
+    sessions. Any filesystem problem degrades to no history rather than failing the command.
+    """
+
+    from prompt_toolkit.history import FileHistory
+
+    from finlexpurple.scope.confirm import user_config_directory
+
+    try:
+        directory = user_config_directory().parent  # .../finlexpurple
+        directory.mkdir(parents=True, exist_ok=True)
+        if os.name != "nt":
+            directory.chmod(0o700)
+        return FileHistory(str(directory / "chat_history"))
+    except OSError:
+        return None
+
+
 @app.command()
 def chat(
     ctx: typer.Context,
@@ -247,7 +269,7 @@ def chat(
         console=console,
         handler=_chat_turn_handler(console, _ask),
         info=_chat_session_info(target),
-        session=PromptSession(),
+        session=PromptSession(history=_chat_history()),
         ask=_ask,
         color=palette.use_color(sys.stdout),
     )
