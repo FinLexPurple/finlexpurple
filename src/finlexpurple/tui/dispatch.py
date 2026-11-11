@@ -121,13 +121,21 @@ def _print_step(console: Console, status: str, text: str) -> None:
 
 
 def _print_findings(console: Console, findings: list) -> None:
-    for finding in findings:
-        # Escape the status brackets so rich renders "[verified]" literally rather than
-        # parsing it as a (invalid) style tag and dropping it.
-        console.print(
-            f"  [flp.muted]\\[{finding.status.value}][/] {finding.severity.value} "
-            f"{finding.vulnerability_class} {finding.url}"
-        )
+    """Render each finding as a card (verified first), then the KV summary is printed separately."""
+
+    if not findings:
+        return
+    from finlexpurple.tui.findings_view import finding_cards
+
+    console.print(finding_cards(findings))
+
+
+def _print_summary(console: Console, rows: list[tuple[str, str]], findings: list) -> None:
+    """Print the KV summary table (caller rows + the by-status findings breakdown)."""
+
+    from finlexpurple.tui.findings_view import summary_table
+
+    console.print(summary_table(rows, findings))
 
 
 def _findings_feedback(agent: str, summary: str, findings: list) -> tuple[str, OperationResult]:
@@ -224,6 +232,11 @@ def _op_run_agent(ctx: OpContext) -> OperationResult:
     status, card = _findings_feedback(resolved.name, result.summary, result.findings)
     _print_step(ctx.console, status, f"{resolved.name}: {result.summary}")
     _print_findings(ctx.console, result.findings)
+    _print_summary(
+        ctx.console,
+        [("target", run_ctx.target.canonical), ("agent", resolved.name)],
+        result.findings,
+    )
     return card
 
 
@@ -307,6 +320,11 @@ def _op_scan(ctx: OpContext) -> OperationResult:
     summary = f"{endpoint_count} endpoint(s) scanned"
     _, card = _findings_feedback("scan", summary, findings)
     _print_findings(ctx.console, findings)
+    _print_summary(
+        ctx.console,
+        [("target", run_ctx.target.canonical), ("scanned", f"{endpoint_count} endpoint(s)")],
+        findings,
+    )
     return card
 
 
