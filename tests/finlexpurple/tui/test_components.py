@@ -15,10 +15,15 @@ def _render(renderable, *, color: bool, width: int = 100) -> str:
 
 
 def _render_truecolor(renderable, monkeypatch, *, width: int = 100) -> str:
-    # Force 24-bit output so the exact brand hex appears (rich else downsamples to 256).
-    monkeypatch.setenv("COLORTERM", "truecolor")
+    # Pin rich's 24-bit color system so the exact brand hex appears on every platform.
+    # Relying on COLORTERM is not enough: rich ignores it on Windows and downsamples to
+    # 16/256-color there, which is what made these assertions fail only on windows-latest.
     monkeypatch.delenv("NO_COLOR", raising=False)
-    return _render(renderable, color=True, width=width)
+    console = make_console(
+        file=io.StringIO(), force_terminal=True, color_system="truecolor", width=width
+    )
+    console.print(renderable)
+    return console.file.getvalue()
 
 
 def test_wordmark_is_thick_block_finlex_with_purple_companion() -> None:
