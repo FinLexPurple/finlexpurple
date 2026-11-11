@@ -9,11 +9,11 @@ the sink, and (4) keeps the persisted observation findings-empty.
 
 from __future__ import annotations
 
-from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import ProbeResponse
 from finlexpurple.detectors.schema import Finding, FindingStatus
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.orchestrator.executor import Executor, WebDetector
+from finlexpurple.verifier.read_back import settlement_confirmer_for as _settlement_confirmer_for
 
 _CHECKOUT = {"method": "GET", "path": "/checkout", "parameter_names": ["price"], "content_type": None}
 

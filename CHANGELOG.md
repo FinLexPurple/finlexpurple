@@ -5,6 +5,32 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Interactive chat agent** (`finlexpurple chat`) — a hardened, scrollback-
+  preserving terminal session where the agent autonomously decides which existing,
+  already-gated operation to run, or you drive them directly with `/scan`, `/run`,
+  `/agents`, and `/verify` slash-commands. Scanning runs through the same scope
+  confirmation, default-deny egress, budget cap, and approval gate as the CLI; the
+  live run renders as recon → detect → verify activity stages and the results as
+  finding cards plus a by-status summary table.
+- **Chat always-ask gate** — in chat, *every* state-changing probe pauses for the
+  human's `y/N`, standard and hard-gated alike, regardless of
+  `REQUIRE_HUMAN_APPROVAL`: a deliberate tightening because the model, not a typed
+  command, chose the operation. Hard-gated categories remain non-overridable.
+- **Chat quality of life** — persistent input history across sessions and `Ctrl-C`
+  to cancel an in-flight turn without ending the session.
+
+### Fixed
+
+- **Wordmark rendering** — the chat session-screen wordmark used a font that mixed
+  the FULL BLOCK glyph with double box-drawing characters (East-Asian-Ambiguous
+  width), which smeared/overlapped in terminals that render ambiguous glyphs two
+  cells wide. It is now a single-glyph FULL-BLOCK font, so every row is the same
+  width and it renders cleanly in color.
+
 ## [0.4.0b2] - 2026-11-08
 
 First **0.4.0 beta** (codename *Pivot*). Adds the gated financial verification

@@ -66,6 +66,32 @@ def _display_target(target: Target) -> str:
     return target.canonical
 
 
+def scope_boundary_lines(target: Target) -> list[str]:
+    """The human-readable scope-boundary disclosure shown before confirming a target.
+
+    The single source of truth for the boundary lines an operator sees before
+    attesting authorization — used by the CLI ``confirm_scope`` prompt and by the
+    interactive chat scope prompt (``tui.scope_prompt``), so both front ends
+    disclose exactly the same boundary before the human confirms.
+    """
+
+    lines = [f"Resolved target: {_display_target(target)}"]
+    if target.kind == "url":
+        lines.append("Subdomains intended for enumeration: none (exact target only).")
+        lines.append(
+            f"Allowed URL boundary: exact host {target.host}, same scheme and port, "
+            f"path {target.path} and its descendants."
+        )
+    elif target.kind == "network":
+        lines.append(f"Allowed IP boundary: {target.network}.")
+    else:
+        lines.append(
+            f"Allowed filesystem boundary: {target.local_path} and descendants "
+            "after resolving symlinks."
+        )
+    return lines
+
+
 def _save_scope(scope: ScopeDefinition, cache_directory: Path | None) -> None:
     path = _cache_path(scope.target, cache_directory)
     directory = path.parent
@@ -89,6 +115,18 @@ def _save_scope(scope: ScopeDefinition, cache_directory: Path | None) -> None:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
         raise ScopeStorageError(f"Could not save scope confirmation: {exc}") from None
+
+
+def save_confirmed_scope(scope: ScopeDefinition, *, cache_directory: Path | None = None) -> None:
+    """Persist an already-confirmed scope atomically with owner-only (0600) permissions.
+
+    The public entry point to the same atomic, private writer the CLI confirmation
+    uses, so an alternative front end (the interactive chat scope prompt) records
+    its confirmation identically. ``scope`` must already carry a confirmation
+    timestamp; raises :class:`ScopeStorageError` if it cannot be written safely.
+    """
+
+    _save_scope(scope, cache_directory)
 
 
 def confirm_scope(
@@ -115,20 +153,8 @@ def confirm_scope(
                 typer.echo(f"First confirmed at: {confirmed_at.isoformat()}")
                 return cached
 
-    typer.echo(f"Resolved target: {_display_target(target)}")
-    if target.kind == "url":
-        typer.echo("Subdomains intended for enumeration: none (exact target only).")
-        typer.echo(
-            f"Allowed URL boundary: exact host {target.host}, same scheme and port, "
-            f"path {target.path} and its descendants."
-        )
-    elif target.kind == "network":
-        typer.echo(f"Allowed IP boundary: {target.network}.")
-    else:
-        typer.echo(
-            f"Allowed filesystem boundary: {target.local_path} and descendants "
-            "after resolving symlinks."
-        )
+    for line in scope_boundary_lines(target):
+        typer.echo(line)
     if not typer.confirm("Do you confirm that you are authorized to test this exact target?", default=False):
         return None
 

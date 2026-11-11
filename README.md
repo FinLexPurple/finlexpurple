@@ -104,6 +104,29 @@ finlexpurple verify-bundle ./finlexpurple-reports/<run>/evidence/<id>.bundle.jso
 Run state and reports are written under `./finlexpurple-reports/` (gitignored;
 reports are `0600` on POSIX because they contain real vulnerability detail).
 
+### Interactive chat (`finlexpurple chat`)
+
+`finlexpurple chat` opens a hardened, scrollback-preserving terminal session with
+the agent. It is interactive-only (it refuses `--json-logs` and a non-TTY stream).
+
+- **Autonomous or direct.** Type a message and the agent decides what to run, or
+  drive the tools yourself with slash-commands (identical safety either way):
+  - `/scan <url>` — recon, detection, then deterministic verification (read-only)
+  - `/run <agent> <url>` — run one named agent (e.g. `cashier`) against a target
+  - `/agents` — list the named agents
+  - `/verify <bundle>` — re-verify an evidence bundle, offline
+  - `/help`, `/exit`
+- **Same safety as the CLI, plus one tightening.** Every scan confirms scope with
+  you first, stays inside the default-deny egress boundary, and is budget-capped.
+  In chat, *every* state-changing probe pauses for your `y/N` approval — standard
+  and hard-gated alike, regardless of `REQUIRE_HUMAN_APPROVAL` — because the agent,
+  not you, chose to run it. The model only proposes; you approve.
+- **Honest results.** Findings render as cards with a status badge (only
+  `VERIFIED` means independently reproduced; `INCONCLUSIVE`/`NOT REPRODUCED` are
+  never dressed up), followed by a by-status summary table.
+- **Quality of life.** Persistent input history (up-arrow recalls across sessions)
+  and `Ctrl-C` cancels an in-flight turn without ending the session.
+
 ### Hardening controls (default-on)
 
 Every control below is on by default; you widen or narrow it, never switch it

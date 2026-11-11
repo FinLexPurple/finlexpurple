@@ -1,11 +1,17 @@
-"""The autonomous dispatcher runs only registered ops, is bounded, and cannot invent ops."""
+"""The autonomous dispatcher runs only registered ops, is bounded, and routes scans through scope."""
 
 from __future__ import annotations
 
 import io
 
 from finlexpurple.providers.base import LLMResponse
-from finlexpurple.tui.dispatch import ChatAction, Operation, OperationResult, dispatch_turn
+from finlexpurple.tui.dispatch import (
+    ChatAction,
+    OpContext,
+    Operation,
+    OperationResult,
+    dispatch_turn,
+)
 from finlexpurple.tui.theme import make_console
 
 
@@ -46,7 +52,7 @@ def test_agent_runs_a_registered_operation_then_replies() -> None:
 def test_custom_operation_result_feeds_back_and_renders() -> None:
     ran: list[bool] = []
 
-    def op() -> OperationResult:
+    def op(ctx: OpContext) -> OperationResult:
         ran.append(True)
         return OperationResult(summary="ok", text="DETAIL-123")
 
@@ -57,6 +63,20 @@ def test_custom_operation_result_feeds_back_and_renders() -> None:
                           history=[], operations=ops)
     assert ran == [True] and reply == "fin"
     assert "my op" in con.file.getvalue() and "ok" in con.file.getvalue()
+
+
+def test_interactive_operation_renders_itself_without_the_shared_stream() -> None:
+    def op(ctx: OpContext) -> OperationResult:
+        ctx.console.print("INTERACTIVE-LINE")
+        return OperationResult(summary="s", text="t")
+
+    ops = {"scan": Operation(label="scan", run=op, interactive=True)}
+    con = _console()
+    provider = _FakeProvider([ChatAction(action="scan"), ChatAction(action="reply", message="z")])
+    reply = dispatch_turn(provider=provider, console=con, system_prompt="s", user_input="go",
+                          history=[], operations=ops)
+    assert reply == "z"
+    assert "INTERACTIVE-LINE" in con.file.getvalue()
 
 
 def test_unregistered_action_is_refused_not_invented() -> None:
@@ -78,3 +98,45 @@ def test_turn_is_bounded_by_the_op_cap() -> None:
     # 3 operation decisions + 1 forced final reply call == 4 provider calls, then it stops.
     assert provider.calls == 4
     assert isinstance(reply, str)
+
+
+# --- The gated scan/run_agent operations (fail-safe paths; no network) ---------
+
+
+def test_scan_refuses_when_the_human_does_not_confirm_scope() -> None:
+    # The human (ask) declines scope: nothing is scanned, and the model is told so.
+    con = _console()
+    provider = _FakeProvider([
+        ChatAction(action="scan", target="https://shop.example/checkout"),
+        ChatAction(action="reply", message="understood"),
+    ])
+    reply = dispatch_turn(provider=provider, console=con, system_prompt="s", user_input="scan it",
+                          history=[], ask=lambda _p: "n")
+    assert reply == "understood"
+    out = con.file.getvalue()
+    assert "scope not confirmed" in out  # the fail-safe denial rendered
+
+
+def test_run_agent_rejects_an_unknown_agent_before_prompting() -> None:
+    asked: list[str] = []
+    con = _console()
+    provider = _FakeProvider([
+        ChatAction(action="run_agent", agent="wizard", target="https://shop.example/"),
+        ChatAction(action="reply", message="ok"),
+    ])
+    reply = dispatch_turn(provider=provider, console=con, system_prompt="s", user_input="run wizard",
+                          history=[], ask=lambda p: asked.append(p) or "y")
+    assert reply == "ok"
+    assert asked == []  # an unknown agent is refused before the human is asked to confirm scope
+
+
+def test_scan_rejects_a_non_url_target() -> None:
+    con = _console()
+    provider = _FakeProvider([
+        ChatAction(action="scan", target="not a url"),
+        ChatAction(action="reply", message="done"),
+    ])
+    reply = dispatch_turn(provider=provider, console=con, system_prompt="s", user_input="scan",
+                          history=[], ask=lambda _p: "y")
+    assert reply == "done"
+    assert "target" in con.file.getvalue().lower()

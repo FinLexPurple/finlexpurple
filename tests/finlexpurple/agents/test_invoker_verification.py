@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from finlexpurple.agents import invoker
 from finlexpurple.agents.registry import AgentRequest, get_agent
-from finlexpurple.cli import _settlement_confirmer_for
 from finlexpurple.detectors.prober import ProbeResponse
 from finlexpurple.detectors.schema import FindingStatus
 from finlexpurple.finance.payment_tests import webhook_bypass
 from finlexpurple.gates.approval_gate import ApprovalGate
 from finlexpurple.recon.endpoint_catalog import Endpoint
+from finlexpurple.verifier.read_back import settlement_confirmer_for as _settlement_confirmer_for
 
 _CHECKOUT = Endpoint(method="GET", url="http://t/checkout", parameters=("price",), content_type=None)
 _WEBHOOK = Endpoint(method="POST", url="http://t/payment/webhook", parameters=(), content_type=None)

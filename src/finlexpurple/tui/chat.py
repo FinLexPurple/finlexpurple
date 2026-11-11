@@ -21,6 +21,7 @@ from rich.markdown import Markdown
 
 from finlexpurple.providers.base import Message
 from finlexpurple.tui import palette
+from finlexpurple.tui.commands import DIRECT_COMMANDS, run_direct_command
 from finlexpurple.tui.components import (
     SHORTCUTS,
     SessionInfo,
@@ -77,11 +78,13 @@ def _print_session_screen(console: Console, info: SessionInfo) -> None:
 
 def _print_help(console: Console) -> None:
     console.print("[flp.accent]Commands[/]")
-    for key, desc in SHORTCUTS:
-        console.print(f"  [flp.accent]{key}[/]  [flp.muted]{desc}[/]")
+    for key, desc in DIRECT_COMMANDS:
+        console.print(f"  [flp.accent]{key:20}[/]  [flp.muted]{desc}[/]")
+    console.print(f"  [flp.accent]{'/help':20}[/]  [flp.muted]show this help[/]")
+    console.print(f"  [flp.accent]{'/exit':20}[/]  [flp.muted]quit[/]")
     console.print(
-        "[flp.muted]Type a message to talk to the agent. /scan, /verify and /agents "
-        "arrive in a later phase.[/]"
+        "[flp.muted]Or just type a message — the agent decides what to run, confirming scope "
+        "and pausing for your approval on anything state-changing.[/]"
     )
 
 
@@ -92,14 +95,29 @@ def _render_turn(console: Console, handler: TurnHandler, line: str, history: lis
     The handler is NOT wrapped in a status spinner here: a handler that shows a live
     activity stream (the autonomous dispatcher) owns the single live region for the turn,
     and rich permits only one live display at a time.
+
+    A Ctrl-C during the turn cancels the in-flight work and returns to the prompt rather than
+    tearing down the session; the turn leaves no trace in the conversation history, so the
+    next turn starts clean. (A cancel mid-probe is safe: a half-run scan changes nothing on
+    the target that the gate had not already approved, and no state is persisted here.)
     """
 
-    reply = handler(line, list(history))
+    try:
+        reply = handler(line, list(history))
+    except KeyboardInterrupt:
+        console.print("[flp.muted]^C cancelled[/]")
+        return
     history.append(Message(role="user", content=line))
     history.append(Message(role="assistant", content=reply))
     console.print()
     console.print(Markdown(reply))
     console.print()
+
+
+def _no_input(_prompt: str) -> str:
+    """Default human-input function: denies (fail-safe when a caller wires none)."""
+
+    return ""
 
 
 def run_chat(
@@ -108,9 +126,14 @@ def run_chat(
     handler: TurnHandler,
     info: SessionInfo,
     session: PromptSession,
+    ask: Callable[[str], str] = _no_input,
     color: bool = True,
 ) -> int:
-    """Run the chat REPL until the user exits. Returns a process exit code (0)."""
+    """Run the chat REPL until the user exits. Returns a process exit code (0).
+
+    ``ask`` is the human-input function the direct slash-commands (and, through the handler,
+    the autonomous operations) use for scope confirmation and the approval gate.
+    """
 
     _print_session_screen(console, info)
     style = _prompt_style(color=color)
@@ -132,6 +155,12 @@ def run_chat(
             _print_help(console)
             continue
         if line.startswith("/"):
+            result = run_direct_command(line, console=console, ask=ask)
+            if result.handled:
+                # Fold a short transcript into history so a later model turn knows what ran.
+                if result.transcript:
+                    history.append(Message(role="user", content=result.transcript))
+                continue
             console.print(f"[flp.muted]unknown command {line!r}; try /help[/]")
             continue
         _render_turn(console, handler, line, history)
