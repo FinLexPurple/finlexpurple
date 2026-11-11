@@ -210,6 +210,12 @@ def _chat_history() -> Any:
     Stored next to the confirmed-scope cache (``<config>/finlexpurple/chat_history``) with the
     same owner-only directory permissions, so the up-arrow recalls previous chat input across
     sessions. Any filesystem problem degrades to no history rather than failing the command.
+
+    The location is whatever :func:`user_config_directory` resolves, so chat history inherits
+    the one platform-native precedence used everywhere in the codebase: ``%LOCALAPPDATA%`` on
+    Windows, ``~/Library/Application Support`` on macOS, and ``$XDG_CONFIG_HOME`` (else
+    ``~/.config``) only on Linux, where XDG is the native convention. There is deliberately no
+    chat-specific override — ``XDG_CONFIG_HOME`` is not consulted off Linux.
     """
 
     from prompt_toolkit.history import FileHistory
