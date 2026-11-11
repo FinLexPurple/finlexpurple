@@ -49,6 +49,18 @@ def test_a_user_turn_is_handled_and_history_accumulates() -> None:
     assert seen == [0, 2]
 
 
+def test_direct_slash_command_is_routed_without_calling_the_model_handler() -> None:
+    called: list[str] = []
+
+    def handler(line: str, history: list[Message]) -> str:
+        called.append(line)
+        return "x"
+
+    out = _run("/agents\n/exit\n", handler)
+    assert "cashier" in out          # the roster was listed directly
+    assert called == []              # the LLM handler was never invoked for a direct command
+
+
 def test_help_lists_commands_and_unknown_slash_is_flagged() -> None:
     out = _run("/help\n/nope\n/exit\n", lambda line, history: "x")
     assert "Commands" in out and "/verify" in out
