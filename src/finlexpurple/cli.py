@@ -248,6 +248,7 @@ def chat(
         handler=_chat_turn_handler(console, _ask),
         info=_chat_session_info(target),
         session=PromptSession(),
+        ask=_ask,
         color=palette.use_color(sys.stdout),
     )
     raise typer.Exit(code=code)
