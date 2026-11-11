@@ -31,6 +31,9 @@ def test_wordmark_is_thick_block_finlex_with_purple_companion() -> None:
     # "Purple" is the small letter-spaced companion alongside.
     assert "P U R P L E" in out
     assert "| __(_)" not in out            # not the old small ASCII banner
+    # The art must stay free of East-Asian-Ambiguous box-drawing glyphs: those render
+    # two cells wide in some terminals and shatter the columns (the colored-terminal garble).
+    assert not set(out) & set("═║╔╗╚╝╦╠╣╬╦╩╬"), "wordmark must stay box-drawing-free"
 
 
 def test_wordmark_two_tone_is_a_strong_split(monkeypatch) -> None:
