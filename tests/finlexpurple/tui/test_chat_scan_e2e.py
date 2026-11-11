@@ -117,7 +117,7 @@ def test_cashier_reaches_verified_when_the_human_approves(base_url) -> None:
     assert reply == "done"
     assert "scope confirmed" in out                 # the human attested authorization
     assert "price_tampering" in out
-    assert "[verified]" in out                       # approved -> captured -> genuinely replayed
+    assert "VERIFIED" in out                       # approved -> captured -> genuinely replayed
     # The tampered probe really hit the server (a price other than the recon's 49.99).
     assert any(p != "49.99" for p in _VulnApp.seen_prices)
 
@@ -126,7 +126,7 @@ def test_nothing_is_scanned_when_the_human_denies_scope(base_url) -> None:
     reply, out = _run(base_url, agent="cashier", ask=_scripted_ask(scope="n", gate="y"))
     assert reply == "done"
     assert "scope not confirmed" in out
-    assert "[verified]" not in out
+    assert "VERIFIED" not in out
     # Scope denial happens before any probe: the checkout was never tampered.
     assert all(p == "49.99" for p in _VulnApp.seen_prices)
 
@@ -138,12 +138,12 @@ def test_gate_denial_keeps_the_finding_reported_not_verified(base_url) -> None:
     assert reply == "done"
     assert "scope confirmed" in out
     assert "price_tampering" in out
-    assert "[verified]" not in out                   # the gate denial is fully binding
-    assert "[reported]" in out
+    assert "VERIFIED" not in out                   # the gate denial is fully binding
+    assert "REPORTED" in out
 
 
 def test_hard_gated_teller_never_actively_probes(base_url) -> None:
     reply, out = _run(base_url, agent="teller", ask=_scripted_ask(scope="y", gate="y"))
     assert reply == "done"
-    assert "[verified]" not in out                   # teller is read-only, hard-gated
+    assert "VERIFIED" not in out                   # teller is read-only, hard-gated
     assert all(p == "49.99" for p in _VulnApp.seen_prices)  # no tampering request was ever sent
