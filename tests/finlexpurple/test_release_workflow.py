@@ -33,10 +33,13 @@ def _pyproject_version() -> str:
     return tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]["version"]
 
 
-def test_version_is_consistent_across_pyproject_init_and_is_the_beta() -> None:
+def test_version_is_consistent_across_pyproject_init_and_is_the_stable_release() -> None:
     version = _pyproject_version()
     assert version == finlexpurple.__version__  # the tagged commit is self-consistent
-    assert version == "0.4.0b2"
+    assert version == "0.4.0"
+    # The stable release carries no pre-release suffix, so the workflow's `is_stable`
+    # gate (tag matching vMAJOR.MINOR.PATCH) routes it to PyPI, not just TestPyPI.
+    assert re.fullmatch(r"\d+\.\d+\.\d+", version), f"{version!r} is not a stable version"
 
 
 def test_changelog_has_a_section_for_the_current_version() -> None:
