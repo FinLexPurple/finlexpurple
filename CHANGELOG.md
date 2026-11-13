@@ -5,7 +5,14 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-11-13
+
+First **stable 0.4.0** (codename *Pivot*). Promotes the `0.4.0b2` beta — the gated
+financial verification classes (Phase 2) and the machine-readable report emitters
+(Phase 3) — to a stable **PyPI** release, and adds the Phase 4 interactive chat
+experience below. The one data contract and evidence-bundle format are unchanged
+from the beta. Published to PyPI with PEP 740 Sigstore attestations; verify them as
+described in [docs/releases/0.4.0.md](docs/releases/0.4.0.md).
 
 ### Added
 
